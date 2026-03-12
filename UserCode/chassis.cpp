@@ -43,7 +43,7 @@ Chassis_Velocity_t chassis_v = {0.0f, 0.0f, 0.0f};
 Chassis *chassis_ = nullptr;
 
 void APP_Chassis_BeforeUpdate() {
-  using chassis::Mecanum4;
+  using chassis::Omni4;
   using controllers::MotorVelController;
 
   for (size_t i = 0; i < 4; ++i)
@@ -53,17 +53,16 @@ void APP_Chassis_BeforeUpdate() {
   chassis_loc_ = new chassis_loc::JustEncoder();
 
   chassis_ = new Chassis(
-      Mecanum4(*chassis_loc_,
-               {
-                   .wheel_radius = 63.5f,
-                   .wheel_distance_x = 820.23f,
-                   .wheel_distance_y = 840.42f,
-                   .chassis_type = Mecanum4::ChassisType::OType,
-                   .wheel_front_right = motor_vel_ctrl[0],
-                   .wheel_front_left = motor_vel_ctrl[1],
-                   .wheel_rear_left = motor_vel_ctrl[2],
-                   .wheel_rear_right = motor_vel_ctrl[3],
-               }),
+      Omni4(*chassis_loc_,
+            {
+                .wheel_radius = 63.5f,
+                .wheel_distance_x = 820.23f,
+                .wheel_distance_y = 840.42f,
+                .wheel_front_right = motor_vel_ctrl[0],
+                .wheel_front_left = motor_vel_ctrl[1],
+                .wheel_rear_left = motor_vel_ctrl[2],
+                .wheel_rear_right = motor_vel_ctrl[3],
+            }),
       {
           .posture_error_pd_cfg =
               {

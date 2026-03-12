@@ -93,8 +93,7 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
     
     bsp::CANDriver
     MotorDrivers::DJI
-
-    Chassis::Mecanum4
+    Chassis::Omni4    
     Chassis::ControllerSlave
     ChassisLocalization::JustEncoder
 
