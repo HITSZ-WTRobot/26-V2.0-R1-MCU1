@@ -1,0 +1,18 @@
+[submodule "Modules/BasicComponents"]
+	path = Modules/BasicComponents
+	url = git@github.com:HITSZ-WTRobot-Packages/BasicComponents.git
+[submodule "Modules/MotorDrivers"]
+	path = Modules/MotorDrivers
+	url = git@github.com:HITSZ-WTRobot-Packages/MotorDrivers.git
+[submodule "Modules/TrajectoryControl"]
+	path = Modules/TrajectoryControl
+	url = git@github.com:HITSZ-WTRobot-Packages/TrajectoryControl.git
+[submodule "Modules/ChassisController"]
+	path = Modules/ChassisController
+	url = git@github.com:HITSZ-WTRobot-Packages/ChassisController.git
+[submodule "Modules/Sensors"]
+	path = Modules/Sensors
+	url = git@github.com:HITSZ-WTRobot-Packages/Sensors.git
+[submodule "Modules/VelocityProfile"]
+	path = Modules/VelocityProfile
+	url = git@github.com:HITSZ-WTRobot-Packages/VelocityProfile.git

@@ -95,12 +95,14 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
     MotorDrivers::DJI
 
     Chassis::Mecanum4
-    Chassis::Controller
+    Chassis::ControllerSlave
+    ChassisLocalization::JustEncoder
 
     VelocityProfile::SCurve
     utils
 
     libs::CRC
     libs::RingBuffer
+    Trajectory::MotorTrajectory
     # Add user defined libraries
 )
