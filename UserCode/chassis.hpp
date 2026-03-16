@@ -1,6 +1,7 @@
 #pragma once
 
-#include "../Modules/ChassisController/Controller/Master/Master.hpp"
+#include "Master.hpp"
+#include "JustEncoder.hpp"
 #include "Omni4.hpp"
 #include "cmsis_os2.h"
 
@@ -9,7 +10,10 @@
 #define MAX_VEL 1.0f
 #define MAX_WZ 90.0f
 
-using Chassis = chassis::controller::Master<chassis::Omni4>;
+using ChassisController = chassis::controller::Master;
+using ChassisLoc        = chassis::loc::JustEncoder;
+extern ChassisLoc*        loc_encoder;
+extern ChassisController* chassis_;
 
 enum Control_Mode {
   POS_Control = 0,
@@ -22,7 +26,6 @@ struct Chassis_Velocity_t {
   float wz;
 };
 
-extern Chassis *chassis_;
 extern Chassis_Velocity_t chassis_v;
 
 extern float target_x;
@@ -46,7 +49,7 @@ inline void APP_Chassis_MoveTo(const float x, const float y) {
   (void)chassis_->setTargetPostureInWorld({
       .x = x,
       .y = y,
-      .yaw = chassis_->posture().in_world.yaw,
+      .yaw = chassis_->postureInWorld().yaw,
   });
 }
 
