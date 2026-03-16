@@ -1,5 +1,6 @@
 
 #include "controller_receive.hpp"
+#include "watchdog.hpp"
 #include <string.h>
 
 #define RAWDATA_SIZE 14   // 每一帧大小
@@ -17,12 +18,12 @@ uint8_t buffer[14];
 static uint8_t rx_dma_buf[RX_DMA_BUF_SIZE];
 static uint8_t rx_frame_buf[RAWDATA_SIZE];
 static uint8_t rx_frame_fill = 0;
-static volatile uint32_t controller_last_rx_tick = 0;
-static const uint32_t CONTROLLER_TIMEOUT_MS = 150;
 uint32_t decodesuccess_count = 0;             // 成功解码次数
 bool decode_enable = false;                   // 解码使能标志
 bool is_controller_connected = true;          // 遥控器连接状态
 JOYSTICK_MODE_E joystick_mode = CHASSIS_MODE; // 遥控器模式，默认底盘模式
+
+static service::Watchdog controller_watchdog;
 
 int16_t LX_T; // 左摇杆x值数据转换后数据
 int16_t LY_T; // 左摇杆y值数据转换后数据
@@ -75,7 +76,6 @@ void Controller_receiver_Init(void) {
     button_last[i] = 0;
   }
   osThreadNew(controller_task, NULL, &controller_attributes);
-  controller_last_rx_tick = HAL_GetTick();
   HAL_UARTEx_ReceiveToIdle_DMA(&huart1, rx_dma_buf, RX_DMA_BUF_SIZE);
   __HAL_DMA_DISABLE_IT(huart1.hdmarx, DMA_IT_HT);
 }
@@ -163,14 +163,12 @@ void Buffer_Decode(void) {
   RX_T = (int16_t)RX;
   RY_T = (int16_t)RY;
   decodesuccess_count++;
-  controller_last_rx_tick = HAL_GetTick();
+  controller_watchdog.feed(100); // 收到有效遥控器数据喂狗（100ms 断连窗口）
   return;
 }
 // 类似于实现一种软看门狗，让遥控器断联后底盘不会疯跑
 void TIM10_Callback(TIM_HandleTypeDef *htim) {
-  (void)htim;
-  const uint32_t now = HAL_GetTick();
-  if ((now - controller_last_rx_tick) > CONTROLLER_TIMEOUT_MS) {
+  if (!controller_watchdog.isFed()) {
     is_controller_connected = false;
     chassis_v.vx = 0;
     chassis_v.vy = 0;
