@@ -53,7 +53,7 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 )
 
 # Add sources to executable
-file(GLOB_RECURSE SOURCES "UserCode/*.*")
+file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS "UserCode/*.*")
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
         # Add user sources here
         ${SOURCES}
@@ -74,7 +74,7 @@ target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
 list(REMOVE_ITEM CMAKE_C_IMPLICIT_LINK_LIBRARIES ob)
 
 
-# Add dependence from library
+# Add
 # ===================== DEPENDENCIES =====================
 # e.g.
 #add_subdirectory(library/motor_drivers/UserCode)
@@ -89,12 +89,13 @@ add_subdirectory(Modules/Sensors)
 
 # Add linked libraries
 target_link_libraries(${CMAKE_PROJECT_NAME}
+
     stm32cubemx
     
     bsp::CANDriver
     MotorDrivers::DJI
     Chassis::Omni4    
-    Chassis::ControllerSlave
+    Chassis::ControllerMaster
     ChassisLocalization::JustEncoder
 
     VelocityProfile::SCurve

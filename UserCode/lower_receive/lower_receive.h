@@ -1,0 +1,85 @@
+/**
+ * @file lower_receive.h
+ * @author Mburn
+ * @date 2026-03-10
+ * @brief 下位机串口数据接收与解析模块头文件（环形缓冲区版）
+ *
+ * 提供数据包结构体、全局环形缓存、串口数据解析、数据清空、类型回调注册等接口。
+ * 支持 detect（AA,1.0,2.0,3.0,4.0,BB）和 apriltag（AA,1.0,2.0,3.0,4.0,5.0,6.0,BB）两种格式。
+ * 缓存满时自动覆盖最旧数据，避免数据丢失。
+ *
+ * 用法：
+ * 1. 在串口接收中断中调用 LR_Parse_And_Store(byte) 实现自动分帧与解析。
+ * 2. 可通过 LR_Set_DataType_Callback 注册回调，区分数据类型。
+ * 3. 通过全局缓存访问解析后的数据（始终保留最新的LR_DATA_MAX_NUM条）。
+ */
+#ifndef __LOWER_RECEIVE_H__
+#define __LOWER_RECEIVE_H__
+
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+
+#include <stdlib.h> // 为 strtof
+#include <ctype.h>  // 为 isspace
+#include <stdint.h>
+#include "gpio.h"
+
+// ======================== 配置参数 ========================
+
+// 串口接收缓冲区长度（每帧最大长度）
+#define LR_RX_BUFFER_SIZE 128
+// 可缓存的数据包最大数量（环形缓冲区大小）
+#define LR_DATA_MAX_NUM 10
+
+// ======================== 数据结构 ========================
+/**
+ * @brief 通用数据包结构体
+ * @note 支持 detect（AA,1.0,2.0,3.0,4.0,BB）和 apriltag（AA,1.0,2.0,3.0,4.0,5.0,6.0,BB）两种格式
+ * @param has_rpy 1:含roll/pitch/yaw，0:仅有yaw
+ */
+typedef struct
+{
+    float x, y, z;          // 位置
+    float roll, pitch, yaw; // 姿态角（apriltag时有效）
+    int   has_rpy;          // 1:有rpy, 0:只有yaw
+} LR_DataPacket;
+
+// ======================== 全局变量 ========================
+// detect格式环形缓存（AA,1.0,2.0,3.0,4.0,BB）
+extern LR_DataPacket lr_detect_buffer[LR_DATA_MAX_NUM];
+extern int           lr_detect_count;     // 当前有效数据量（≤LR_DATA_MAX_NUM）
+extern int           lr_detect_write_idx; // 下一个写入位置的索引
+
+// apriltag格式环形缓存（AA,1.0,2.0,3.0,4.0,5.0,6.0,BB）
+extern LR_DataPacket lr_apriltag_buffer[LR_DATA_MAX_NUM];
+extern int           lr_apriltag_count;     // 当前有效数据量（≤LR_DATA_MAX_NUM）
+extern int           lr_apriltag_write_idx; // 下一个写入位置的索引
+
+// ======================== 接口函数 ========================
+/**
+ * @brief 串口接收中断中调用，逐字节缓存，遇到'\n'或,BB自动解析一帧
+ * @param byte 新接收到的字节
+ * @note 推荐在HAL_UART_RxCpltCallback等中断回调内调用
+ */
+void LR_Parse_And_Store(uint8_t byte);
+
+/**
+ * @brief 清空所有已接收并解析的数据包缓存
+ * @note 清除detect和apriltag两类缓存、计数及写索引
+ */
+void LR_Clear_Data_Buffer(void);
+
+/**
+ * @brief 设置数据类型回调函数（0=detect, 1=apriltag）
+ * @param cb 回调函数指针，参数type=0为detect，1为apriltag
+ * @note 每次成功解析一帧数据后自动调用（无论是否覆盖旧数据）
+ */
+typedef void (*LR_DataTypeCallback)(int type);
+void LR_Set_DataType_Callback(LR_DataTypeCallback cb);
+
+#ifdef __cplusplus
+}
+#endif
+#endif

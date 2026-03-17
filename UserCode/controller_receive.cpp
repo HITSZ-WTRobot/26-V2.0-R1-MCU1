@@ -1,9 +1,11 @@
 
 #include "controller_receive.hpp"
 #include "watchdog.hpp"
+#include <string.h>
 
 #define RAWDATA_SIZE 14   // 每一帧大小
 #define BUFFER_SIZE 14    // DMA接收缓冲区大小
+#define RX_DMA_BUF_SIZE 64
 #define FRAME_HEADER 0xAA // 帧头
 #define FRAME_TAIL 0xBB   // 帧尾
 #define BUTTON_NUM 9      // 按钮个数
@@ -13,6 +15,9 @@ uint32_t bbb = 0;
 
 uint32_t decode_count = 0;
 uint8_t buffer[14];
+static uint8_t rx_dma_buf[RX_DMA_BUF_SIZE];
+static uint8_t rx_frame_buf[RAWDATA_SIZE];
+static uint8_t rx_frame_fill = 0;
 uint32_t decodesuccess_count = 0;             // 成功解码次数
 bool decode_enable = false;                   // 解码使能标志
 bool is_controller_connected = true;          // 遥控器连接状态
@@ -45,21 +50,49 @@ const osThreadAttr_t controller_attributes = {
     .priority = (osPriority_t)osPriorityHigh,
 };
 
+static void ProcessRxBytes(const uint8_t *data, uint16_t size) {
+  for (uint16_t i = 0; i < size; ++i) {
+    const uint8_t byte = data[i];
+
+    // 等待帧头，避免固定分包错位导致长期解码失败。
+    if (rx_frame_fill == 0U && byte != FRAME_HEADER) {
+      continue;
+    }
+
+    rx_frame_buf[rx_frame_fill++] = byte;
+
+    if (rx_frame_fill >= RAWDATA_SIZE) {
+      decode_count++;
+      memcpy(buffer, rx_frame_buf, RAWDATA_SIZE);
+      Buffer_Decode();
+      rx_frame_fill = 0U;
+    }
+  }
+}
+
 void Controller_receiver_Init(void) {
   for (int i = 0; i < BUTTON_NUM; i++) {
     button[i] = 0;
     button_last[i] = 0;
   }
   osThreadNew(controller_task, NULL, &controller_attributes);
-  HAL_UART_Receive_DMA(&huart1, buffer, 14);
+  HAL_UARTEx_ReceiveToIdle_DMA(&huart1, rx_dma_buf, RX_DMA_BUF_SIZE);
+  __HAL_DMA_DISABLE_IT(huart1.hdmarx, DMA_IT_HT);
 }
 
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
   if (huart->Instance == USART1) {
-    decode_count++;
+    ProcessRxBytes(rx_dma_buf, RX_DMA_BUF_SIZE);
+    HAL_UARTEx_ReceiveToIdle_DMA(&huart1, rx_dma_buf, RX_DMA_BUF_SIZE);
+    __HAL_DMA_DISABLE_IT(huart1.hdmarx, DMA_IT_HT);
+  }
+}
 
-    Buffer_Decode();
-    HAL_UART_Receive_DMA(&huart1, buffer, BUFFER_SIZE);
+void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size) {
+  if (huart->Instance == USART1) {
+    ProcessRxBytes(rx_dma_buf, Size);
+    HAL_UARTEx_ReceiveToIdle_DMA(&huart1, rx_dma_buf, RX_DMA_BUF_SIZE);
+    __HAL_DMA_DISABLE_IT(huart1.hdmarx, DMA_IT_HT);
   }
 }
 
