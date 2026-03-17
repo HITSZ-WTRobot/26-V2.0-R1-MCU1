@@ -19,7 +19,8 @@ typedef enum
 {
     CHASSIS_MODE = 0,
     CLAMP_MODE   = 1,
-    ARM_MODE     = 2
+    ARM_MODE     = 2,
+    AUTO_ALIGN_MODE = 3
 } JOYSTICK_MODE_E;
 
 void Controller_receiver_Init(void);
