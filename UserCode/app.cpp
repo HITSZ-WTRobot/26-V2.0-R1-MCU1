@@ -58,7 +58,7 @@ extern "C" void Init(void* argument)
     HAL_TIM_RegisterCallback(&htim10, HAL_TIM_PERIOD_ELAPSED_CB_ID, TIM10_Callback);
     HAL_TIM_Base_Start_IT(&htim10);
 
-    APP_Device_WaitConnections();
+    //APP_Device_WaitConnections();
     osDelay(2000);
 
     APP_Chassis_Init();
