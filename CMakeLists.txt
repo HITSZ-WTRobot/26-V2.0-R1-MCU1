@@ -53,7 +53,7 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 )
 
 # Add sources to executable
-file(GLOB_RECURSE SOURCES "UserCode/*.*")
+file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS "UserCode/*.*")
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
         # Add user sources here
         ${SOURCES}
