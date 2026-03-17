@@ -46,6 +46,13 @@ typedef struct
     int   has_rpy;          // 1:有rpy, 0:只有yaw
 } LR_DataPacket;
 
+typedef struct
+{
+    float x;
+    float y;
+    float z;
+} LR_Vector3;
+
 // ======================== 全局变量 ========================
 // detect格式环形缓存（AA,1.0,2.0,3.0,4.0,BB）
 extern LR_DataPacket lr_detect_buffer[LR_DATA_MAX_NUM];
@@ -78,6 +85,48 @@ void LR_Clear_Data_Buffer(void);
  */
 typedef void (*LR_DataTypeCallback)(int type);
 void LR_Set_DataType_Callback(LR_DataTypeCallback cb);
+
+/**
+ * @brief 设置相机中心相对车体中心的位置（单位与解算结果一致）
+ */
+void LR_Set_Camera_To_Body_Offset(float x, float y, float z);
+
+/**
+ * @brief 设置机械臂基座相对车体中心的位置（单位与解算结果一致）
+ */
+void LR_Set_Arm_To_Body_Offset(float x, float y, float z);
+
+/**
+ * @brief 读取当前相机相对车体中心的位置参数
+ */
+LR_Vector3 LR_Get_Camera_To_Body_Offset(void);
+
+/**
+ * @brief 读取当前机械臂相对车体中心的位置参数
+ */
+LR_Vector3 LR_Get_Arm_To_Body_Offset(void);
+
+/**
+ * @brief 将相机坐标系下点转换为车体坐标系下点
+ */
+void LR_Convert_CameraPoint_To_Body(float cam_x, float cam_y, float cam_z,
+                                    float* body_x, float* body_y, float* body_z);
+
+/**
+ * @brief 将相机坐标系下点转换为机械臂坐标系下点
+ */
+void LR_Convert_CameraPoint_To_Arm(float cam_x, float cam_y, float cam_z,
+                                   float* arm_x, float* arm_y, float* arm_z);
+
+/**
+ * @brief 将数据包中的位置从相机基准转换为车体基准（姿态字段保持不变）
+ */
+LR_DataPacket LR_Convert_Packet_CameraToBody(const LR_DataPacket* cam_pkt);
+
+/**
+ * @brief 将数据包中的位置从相机基准转换为机械臂基准（姿态字段保持不变）
+ */
+LR_DataPacket LR_Convert_Packet_CameraToArm(const LR_DataPacket* cam_pkt);
 
 #ifdef __cplusplus
 }

@@ -14,12 +14,14 @@
  * 3. 通过全局缓存访问解析后的数据。
  */
 
-#include "lower_receive.h"
+#include "lower_receive.hpp"
 #include <string.h>
 #include <stdio.h>
 
 // ======================== 内部变量 ========================
 static LR_DataTypeCallback g_datatype_cb = NULL;
+static LR_Vector3          g_camera_to_body_offset = { 0.0f, 0.0f, 0.0f };
+static LR_Vector3          g_arm_to_body_offset    = { 0.0f, 0.0f, 0.0f };
 
 // 环形缓冲区变量（读/写索引 + 计数）
 LR_DataPacket lr_detect_buffer[LR_DATA_MAX_NUM];
@@ -41,6 +43,79 @@ static int  lr_rx_line_pos = 0;
 void LR_Set_DataType_Callback(LR_DataTypeCallback cb)
 {
     g_datatype_cb = cb;
+}
+
+void LR_Set_Camera_To_Body_Offset(float x, float y, float z)
+{
+    g_camera_to_body_offset.x = x;
+    g_camera_to_body_offset.y = y;
+    g_camera_to_body_offset.z = z;
+}
+
+void LR_Set_Arm_To_Body_Offset(float x, float y, float z)
+{
+    g_arm_to_body_offset.x = x;
+    g_arm_to_body_offset.y = y;
+    g_arm_to_body_offset.z = z;
+}
+
+LR_Vector3 LR_Get_Camera_To_Body_Offset(void)
+{
+    return g_camera_to_body_offset;
+}
+
+LR_Vector3 LR_Get_Arm_To_Body_Offset(void)
+{
+    return g_arm_to_body_offset;
+}
+
+void LR_Convert_CameraPoint_To_Body(float cam_x, float cam_y, float cam_z,
+                                    float* body_x, float* body_y, float* body_z)
+{
+    if (body_x)
+        *body_x = cam_x + g_camera_to_body_offset.x;
+    if (body_y)
+        *body_y = cam_y + g_camera_to_body_offset.y;
+    if (body_z)
+        *body_z = cam_z + g_camera_to_body_offset.z;
+}
+
+void LR_Convert_CameraPoint_To_Arm(float cam_x, float cam_y, float cam_z,
+                                   float* arm_x, float* arm_y, float* arm_z)
+{
+    float body_x = 0.0f;
+    float body_y = 0.0f;
+    float body_z = 0.0f;
+
+    LR_Convert_CameraPoint_To_Body(cam_x, cam_y, cam_z, &body_x, &body_y, &body_z);
+    if (arm_x)
+        *arm_x = body_x - g_arm_to_body_offset.x;
+    if (arm_y)
+        *arm_y = body_y - g_arm_to_body_offset.y;
+    if (arm_z)
+        *arm_z = body_z - g_arm_to_body_offset.z;
+}
+
+LR_DataPacket LR_Convert_Packet_CameraToBody(const LR_DataPacket* cam_pkt)
+{
+    LR_DataPacket out = { 0 };
+    if (!cam_pkt)
+        return out;
+
+    out = *cam_pkt;
+    LR_Convert_CameraPoint_To_Body(cam_pkt->x, cam_pkt->y, cam_pkt->z, &out.x, &out.y, &out.z);
+    return out;
+}
+
+LR_DataPacket LR_Convert_Packet_CameraToArm(const LR_DataPacket* cam_pkt)
+{
+    LR_DataPacket out = { 0 };
+    if (!cam_pkt)
+        return out;
+
+    out = *cam_pkt;
+    LR_Convert_CameraPoint_To_Arm(cam_pkt->x, cam_pkt->y, cam_pkt->z, &out.x, &out.y, &out.z);
+    return out;
 }
 
 // ======================== 数据缓存清空 ========================
