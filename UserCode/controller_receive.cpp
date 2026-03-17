@@ -1,5 +1,6 @@
 
 #include "controller_receive.hpp"
+#include "vision_lower_receive.hpp"
 #include "watchdog.hpp"
 #include <string.h>
 
@@ -49,6 +50,36 @@ const osThreadAttr_t controller_attributes = {
     .stack_size = 128 * 8,
     .priority = (osPriority_t)osPriorityHigh,
 };
+
+static void ApplyVisionAutoAlign(void) {
+  chassis_v.vx = 0.0f;
+  chassis_v.vy = 0.0f;
+  chassis_v.wz = 0.0f;
+
+  const int has_apriltag = (lr_apriltag_count > 0);
+  const int has_detect = (lr_detect_count > 0);
+  if (!has_apriltag && !has_detect) {
+    // No vision packet: keep chassis stopped in velocity mode for safety.
+    chassis_control_mode = VEL_Control;
+    return;
+  }
+
+  LR_DataPacket src = {0};
+  if (has_apriltag) {
+    const int latest_idx = (lr_apriltag_write_idx + LR_DATA_MAX_NUM - 1) % LR_DATA_MAX_NUM;
+    src = lr_apriltag_buffer[latest_idx];
+  } else {
+    const int latest_idx = (lr_detect_write_idx + LR_DATA_MAX_NUM - 1) % LR_DATA_MAX_NUM;
+    src = lr_detect_buffer[latest_idx];
+  }
+
+  const LR_DataPacket body_pkt = LR_Convert_Packet_CameraToArm(&src);
+
+  target_x = body_pkt.x;
+  target_y = body_pkt.y;
+  target_yaw = body_pkt.yaw;
+  chassis_control_mode = POS_Control;
+}
 
 static void ProcessRxBytes(const uint8_t *data, uint16_t size) {
   for (uint16_t i = 0; i < size; ++i) {
@@ -101,19 +132,24 @@ void controller_task(void *argument) {
     if ((osEventFlagsWait(flags_id, 0x00000010U, osFlagsWaitAny, 0) &
          0xFF000010U) == 0x00000010U) {
       joystick_mode =
-          (JOYSTICK_MODE_E)(((int)joystick_mode + 1) % 3); // 三种模式循环切换
+          (JOYSTICK_MODE_E)(((int)joystick_mode + 1) % 4); // 四种模式循环切换
     }
     switch (joystick_mode) {
     case CHASSIS_MODE:
+      chassis_control_mode = VEL_Control;
       chassis_v.vx = __JOYSTICK2VEL__(LY_T);
       chassis_v.vy = __JOYSTICK2VEL__(-1.0f * LX_T);
       chassis_v.wz = __JOYSTICK2WZ__(-1.0f * RX_T);
       break;
     case CLAMP_MODE:
+      chassis_control_mode = VEL_Control;
       chassis_v.vx = 0;
       chassis_v.vy = 0;
       chassis_v.wz = 0;
 
+      break;
+    case AUTO_ALIGN_MODE:
+      ApplyVisionAutoAlign();
       break;
     default:
       break;
@@ -122,6 +158,7 @@ void controller_task(void *argument) {
     osDelay(10);
   }
 }
+
 void Buffer_Decode(void) {
   if (buffer[0] != FRAME_HEADER)
     return;
