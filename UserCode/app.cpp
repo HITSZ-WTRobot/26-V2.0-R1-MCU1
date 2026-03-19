@@ -5,6 +5,7 @@
 #include "device.hpp"
 #include "drawer.hpp"
 #include "eventflags.hpp"
+#include "interboard_comm.hpp"
 #include "tim.h"
 
 Drawer* drawer = nullptr;
@@ -41,6 +42,7 @@ extern "C" void Init(void* argument)
 
     flags_create();
     APP_Device_Init();
+    InterboardComm_Init();
     Controller_receiver_Init();
 
     APP_Chassis_BeforeUpdate();

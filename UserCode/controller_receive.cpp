@@ -1,5 +1,6 @@
 
 #include "controller_receive.hpp"
+#include "interboard_comm.hpp"
 #include "vision_lower_receive.hpp"
 #include "watchdog.hpp"
 #include <string.h>
@@ -52,6 +53,7 @@ const osThreadAttr_t controller_attributes = {
 };
 
 constexpr float kAutoAlignStepM = 0.15f;
+constexpr float kInterboardRetreatVelMps = 0.25f;
 static bool g_step_cmd_active = false;
 
 static void ApplyButtonStepAlignFallback(void) {
@@ -203,6 +205,15 @@ void controller_task(void *argument) {
     case AUTO_ALIGN_MODE:
       if (button_status & (1U << 8)) {
         AbortAutoAlignAndStop();
+      } else if (InterboardComm_IsRetreatRequested()) {
+        g_step_cmd_active = false;
+        target_x = 0.0f;
+        target_y = 0.0f;
+        target_yaw = 0.0f;
+        chassis_control_mode = VEL_Control;
+        chassis_v.vx = -kInterboardRetreatVelMps;
+        chassis_v.vy = 0.0f;
+        chassis_v.wz = 0.0f;
       } else {
         ApplyVisionAutoAlign();
       }
