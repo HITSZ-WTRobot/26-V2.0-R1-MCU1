@@ -122,6 +122,17 @@ static void ApplyVisionAutoAlign(void) {
   chassis_control_mode = POS_Control;
 }
 
+static void AbortAutoAlignAndStop(void) {
+  g_step_cmd_active = false;
+  target_x = 0.0f;
+  target_y = 0.0f;
+  target_yaw = 0.0f;
+  chassis_control_mode = VEL_Control;
+  chassis_v.vx = 0.0f;
+  chassis_v.vy = 0.0f;
+  chassis_v.wz = 0.0f;
+}
+
 static void ProcessRxBytes(const uint8_t *data, uint16_t size) {
   for (uint16_t i = 0; i < size; ++i) {
     const uint8_t byte = data[i];
@@ -190,7 +201,11 @@ void controller_task(void *argument) {
 
       break;
     case AUTO_ALIGN_MODE:
-      ApplyVisionAutoAlign();
+      if (button_status & (1U << 8)) {
+        AbortAutoAlignAndStop();
+      } else {
+        ApplyVisionAutoAlign();
+      }
       break;
     default:
       break;
