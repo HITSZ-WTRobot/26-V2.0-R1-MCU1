@@ -53,8 +53,10 @@ const osThreadAttr_t controller_attributes = {
 };
 
 constexpr float kAutoAlignStepM = 0.15f;
-constexpr float kInterboardRetreatVelMps = 0.25f;
+constexpr float kInterboardRetreatDistanceM = 0.20f;
 static bool g_step_cmd_active = false;
+static bool g_interboard_retreat_active = false;
+static bool g_interboard_retreat_last_req = false;
 
 static void ApplyButtonStepAlignFallback(void) {
   const uint32_t event = button_status;
@@ -126,6 +128,7 @@ static void ApplyVisionAutoAlign(void) {
 
 static void AbortAutoAlignAndStop(void) {
   g_step_cmd_active = false;
+  g_interboard_retreat_active = false;
   target_x = 0.0f;
   target_y = 0.0f;
   target_yaw = 0.0f;
@@ -133,6 +136,34 @@ static void AbortAutoAlignAndStop(void) {
   chassis_v.vx = 0.0f;
   chassis_v.vy = 0.0f;
   chassis_v.wz = 0.0f;
+}
+
+static void ApplyInterboardRetreatByPosition(void) {
+  const bool retreat_req = InterboardComm_IsRetreatRequested();
+
+  // 上升沿触发一次固定距离后退，距离定义在 MCU1 侧。
+  if (retreat_req && !g_interboard_retreat_last_req) {
+    g_interboard_retreat_active = true;
+    g_step_cmd_active = false;
+    target_x = -kInterboardRetreatDistanceM;
+    target_y = 0.0f;
+    target_yaw = 0.0f;
+  }
+  g_interboard_retreat_last_req = retreat_req;
+
+  if (g_interboard_retreat_active) {
+    chassis_control_mode = POS_Control;
+    if (chassis_ && chassis_->isTrajectoryFinished()) {
+      g_interboard_retreat_active = false;
+      target_x = 0.0f;
+      target_y = 0.0f;
+      target_yaw = 0.0f;
+      chassis_control_mode = VEL_Control;
+      chassis_v.vx = 0.0f;
+      chassis_v.vy = 0.0f;
+      chassis_v.wz = 0.0f;
+    }
+  }
 }
 
 static void ProcessRxBytes(const uint8_t *data, uint16_t size) {
@@ -206,14 +237,9 @@ void controller_task(void *argument) {
       if (button_status & (1U << 8)) {
         AbortAutoAlignAndStop();
       } else if (InterboardComm_IsRetreatRequested()) {
-        g_step_cmd_active = false;
-        target_x = 0.0f;
-        target_y = 0.0f;
-        target_yaw = 0.0f;
-        chassis_control_mode = VEL_Control;
-        chassis_v.vx = -kInterboardRetreatVelMps;
-        chassis_v.vy = 0.0f;
-        chassis_v.wz = 0.0f;
+        ApplyInterboardRetreatByPosition();
+      } else if (g_interboard_retreat_active) {
+        ApplyInterboardRetreatByPosition();
       } else {
         ApplyVisionAutoAlign();
       }
