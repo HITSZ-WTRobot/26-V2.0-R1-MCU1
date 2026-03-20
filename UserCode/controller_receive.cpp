@@ -38,6 +38,8 @@ uint16_t LY; // 左摇杆y值数据原始数据
 uint16_t RX; // 右摇杆x值数据原始数据
 uint16_t RY; // 右摇杆y值数据原始数据
 
+int x,y,yaw; // 来自视觉的目标位置和朝向数据（单位米/度）
+
 bool joystick_button_L; // 左摇杆按键状态
 bool joystick_button_R; // 右摇杆按键状态
 
@@ -121,9 +123,14 @@ static void ApplyVisionAutoAlign(void) {
 
   const LR_DataPacket body_pkt = LR_Convert_Packet_CameraToArm(&src);
 
-  target_x = body_pkt.x;
-  target_y = body_pkt.y;
-  target_yaw = body_pkt.yaw;
+  x = body_pkt.x;
+  y = body_pkt.y;
+  yaw = body_pkt.yaw;
+  // target_x = body_pkt.x;
+  // target_y = body_pkt.y;
+  // target_yaw = body_pkt.yaw;
+
+
   chassis_control_mode = POS_Control;
 }
 
