@@ -20,6 +20,7 @@ uint8_t buffer[14];
 static uint8_t rx_dma_buf[RX_DMA_BUF_SIZE];
 static uint8_t rx_frame_buf[RAWDATA_SIZE];
 static uint8_t rx_frame_fill = 0;
+static uint8_t lr_uart2_rx_byte = 0;
 uint32_t decodesuccess_count = 0;             // 成功解码次数
 bool decode_enable = false;                   // 解码使能标志
 bool is_controller_connected = true;          // 遥控器连接状态
@@ -194,6 +195,8 @@ void Controller_receiver_Init(void) {
   osThreadNew(controller_task, NULL, &controller_attributes);
   HAL_UARTEx_ReceiveToIdle_DMA(&huart1, rx_dma_buf, RX_DMA_BUF_SIZE);
   __HAL_DMA_DISABLE_IT(huart1.hdmarx, DMA_IT_HT);
+
+  HAL_UART_Receive_IT(&huart2, &lr_uart2_rx_byte, 1);
 }
 
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
@@ -201,6 +204,9 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
     ProcessRxBytes(rx_dma_buf, RX_DMA_BUF_SIZE);
     HAL_UARTEx_ReceiveToIdle_DMA(&huart1, rx_dma_buf, RX_DMA_BUF_SIZE);
     __HAL_DMA_DISABLE_IT(huart1.hdmarx, DMA_IT_HT);
+  } else if (huart->Instance == USART2) {
+    LR_Parse_And_Store(lr_uart2_rx_byte);
+    HAL_UART_Receive_IT(&huart2, &lr_uart2_rx_byte, 1);
   }
 }
 

@@ -20,8 +20,8 @@
 
 // ======================== 内部变量 ========================
 static LR_DataTypeCallback g_datatype_cb = NULL;
-static LR_Vector3          g_camera_to_body_offset = { 0.0f, 0.0f, 0.0f };
-static LR_Vector3          g_arm_to_body_offset    = { 0.0f, 0.0f, 0.0f };
+static LR_Vector3          g_camera_to_body_offset = { 0.0f, 0.48f, 0.0f };// 视觉坐标系（相机）到机器人身体坐标系的偏移 单位米
+static LR_Vector3          g_arm_to_body_offset    = { -0.60f, 0.60f, 0.0f };// 视觉坐标系（相机）到机器人身体坐标系的偏移 单位米
 
 // 环形缓冲区变量（读/写索引 + 计数）
 LR_DataPacket lr_detect_buffer[LR_DATA_MAX_NUM];
