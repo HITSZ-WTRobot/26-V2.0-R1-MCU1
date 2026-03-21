@@ -49,6 +49,8 @@ float x = 0.0f,
       y = 0.0f,
       yaw = 0.0f; // 来自视觉的目标位置和朝向数据（单位米/度）
 
+uint8_t auto_mode = 0; // 自动模式选择，0=没有视觉信息模式，1=自动对齐
+
 bool joystick_button_L; // 左摇杆按键状态
 bool joystick_button_R; // 右摇杆按键状态
 
@@ -69,6 +71,7 @@ constexpr float kInterboardRetreatDistanceM = 0.20f;
 static bool g_step_cmd_active = false;
 static bool g_interboard_retreat_active = false;
 static bool g_interboard_retreat_last_req = false;
+static bool g_emergency_hold_active = false;
 
 static void ApplyButtonStepAlignFallback(void) {
   const uint32_t event = button_status;
@@ -118,7 +121,7 @@ static void ApplyVisionAutoAlign(void) {
     ApplyButtonStepAlignFallback();
     return;
   }
-
+  auto_mode = has_apriltag ? 2 : 1; // 2=apriltag, 1=detect
   g_step_cmd_active = false;
 
   LR_DataPacket src = {0};
@@ -135,9 +138,9 @@ static void ApplyVisionAutoAlign(void) {
   x = body_pkt.x;
   y = body_pkt.y;
   yaw = body_pkt.yaw;
-  // target_x = body_pkt.x;
-  // target_y = body_pkt.y;
-  // target_yaw = body_pkt.yaw;
+  target_x = body_pkt.x;
+  target_y = body_pkt.y;
+  target_yaw = body_pkt.yaw;
 
 
   chassis_control_mode = POS_Control;
@@ -228,11 +231,12 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
     const uint8_t rx_byte = lr_uart2_rx_byte;
     vision_uart2_diag_rx_irq_cnt++;
     vision_uart2_diag_rx_byte_cnt++;
-    LR_Parse_And_Store(rx_byte);
     // 先重启接收，尽量缩短无保护窗口，避免连续字节导致ORE。
     if (HAL_UART_Receive_IT(&huart2, &lr_uart2_rx_byte, 1) != HAL_OK) {
       vision_uart2_diag_rearm_fail_cnt++;
+      return;
     }
+    LR_Parse_And_Store(rx_byte);
   }
 }
 
@@ -240,6 +244,13 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart) {
   if (huart->Instance == USART2) {
     vision_uart2_diag_err_cnt++;
     vision_uart2_diag_last_err_code = huart->ErrorCode;
+
+    // 清除常见UART错误标志，避免错误中断反复触发导致接收回调停滞。
+    __HAL_UART_CLEAR_PEFLAG(huart);
+    __HAL_UART_CLEAR_FEFLAG(huart);
+    __HAL_UART_CLEAR_NEFLAG(huart);
+    __HAL_UART_CLEAR_OREFLAG(huart);
+
     if (HAL_UART_Receive_IT(&huart2, &lr_uart2_rx_byte, 1) != HAL_OK) {
       vision_uart2_diag_rearm_fail_cnt++;
 
@@ -277,9 +288,18 @@ void controller_task(void *argument) {
 
       break;
     case AUTO_ALIGN_MODE:
-      if (button_status & (1U << 8)) {
-        AbortAutoAlignAndStop();}
-        else if (InterboardComm_IsRetreatRequested()) {// 远程请求后退优先级高于自动对齐，确保安全。
+      if (button[8] || (button_status & (1U << 8))) {
+        // 按下或触发按钮8都立即锁止，且按住期间持续锁止。
+        g_emergency_hold_active = true;
+      }
+
+      if (g_emergency_hold_active) {
+        AbortAutoAlignAndStop();
+        if (!button[8]) {
+          // 释放后退出锁止态，避免永久占用自动对齐流程。
+          g_emergency_hold_active = false;
+        }
+      } else if (InterboardComm_IsRetreatRequested()) {// 远程请求后退优先级高于自动对齐，确保安全。
         ApplyInterboardRetreatByPosition();
       } else if (g_interboard_retreat_active) {// 如果正在执行远程后退，则持续执行，直到完成。避免在后退过程中被自动对齐命令打断。
         ApplyInterboardRetreatByPosition();

@@ -69,16 +69,7 @@ static LR_DataTypeCallback g_datatype_cb = NULL;
 static LR_Vector3          g_camera_to_body_offset = { 0.0f, 0.48f, 0.0f };// 视觉坐标系（相机）到机器人身体坐标系的偏移 单位米
 static LR_Vector3          g_arm_to_body_offset    = { -0.60f, 0.60f, 0.0f };// 视觉坐标系（相机）到机器人身体坐标系的偏移 单位米
 
-volatile uint32_t lr_diag_parse_ok_count   = 0;
-volatile uint32_t lr_diag_parse_fail_count = 0;
-volatile float    lr_diag_last_x           = 0.0f;
-volatile float    lr_diag_last_y           = 0.0f;
-volatile float    lr_diag_last_z           = 0.0f;
-volatile float    lr_diag_last_yaw         = 0.0f;
-volatile uint8_t  lr_diag_last_type        = 0;
-volatile uint8_t  lr_diag_last_fail_stage  = 0;
-volatile uint32_t lr_diag_last_raw_len     = 0;
-volatile char     lr_diag_last_raw_frame[LR_RX_BUFFER_SIZE] = { 0 };
+// 已移除测试用全局诊断变量，生产/发布时请使用更轻量的日志或调试接口。
 
 // 环形缓冲区变量（读/写索引 + 计数）
 LR_DataPacket lr_detect_buffer[LR_DATA_MAX_NUM];
@@ -191,14 +182,7 @@ void LR_Clear_Data_Buffer(void)
 // ======================== 数据帧解析 ========================
 static void LR_Parse_Frame(const char* frame)
 {
-    size_t raw_len = 0;
-    while (raw_len < (size_t)(LR_RX_BUFFER_SIZE - 1) && frame[raw_len] != '\0')
-    {
-        raw_len++;
-    }
-    lr_diag_last_raw_len = (uint32_t)raw_len;
-    memcpy((void*)lr_diag_last_raw_frame, frame, raw_len);
-    lr_diag_last_raw_frame[raw_len] = '\0';
+    // 不再维护测试用全局原始帧缓冲，直接在本地处理。
 
     char normalized[LR_RX_BUFFER_SIZE];
     int  norm_pos = 0;
@@ -229,12 +213,10 @@ static void LR_Parse_Frame(const char* frame)
         start += 3; // 跳过帧头 AA,
     }
 
-    int len = end - start ;
+    int len = (int)(end - start);
     if (len <= 0 || len >= LR_RX_BUFFER_SIZE)
     {
-        lr_diag_parse_fail_count++;
-        lr_diag_last_fail_stage = 2;
-        return; // 长度异常
+        return; // 长度异常，直接返回
     }
     char content[LR_RX_BUFFER_SIZE];
     strncpy(content, start, len);
@@ -254,13 +236,7 @@ static void LR_Parse_Frame(const char* frame)
         pkt.has_rpy = 0;
         pkt.yaw     = pkt.roll; // detect格式，只有yaw（第4个值）
 
-        lr_diag_parse_ok_count++;
-        lr_diag_last_type = 0;
-        lr_diag_last_x    = pkt.x;
-        lr_diag_last_y    = pkt.y;
-        lr_diag_last_z    = pkt.z;
-        lr_diag_last_yaw  = pkt.yaw;
-        lr_diag_last_fail_stage = 0;
+        // 解析成功，写入 detect 环形缓冲
 
         // 写入当前写索引位置
         lr_detect_buffer[lr_detect_write_idx] = pkt;
@@ -288,13 +264,7 @@ static void LR_Parse_Frame(const char* frame)
         pkt.yaw = values[5];
         pkt.has_rpy = 1; // apriltag格式，含roll/pitch/yaw（4/5/6值）
 
-        lr_diag_parse_ok_count++;
-        lr_diag_last_type = 1;
-        lr_diag_last_x    = pkt.x;
-        lr_diag_last_y    = pkt.y;
-        lr_diag_last_z    = pkt.z;
-        lr_diag_last_yaw  = pkt.yaw;
-        lr_diag_last_fail_stage = 0;
+        // 解析成功，写入 apriltag 环形缓冲
 
         // 写入当前写索引位置
         lr_apriltag_buffer[lr_apriltag_write_idx] = pkt;
@@ -313,8 +283,6 @@ static void LR_Parse_Frame(const char* frame)
     }
     else
     {
-        lr_diag_parse_fail_count++;
-        lr_diag_last_fail_stage = (strstr(normalized, LR_FRAME_HEAD) && strstr(normalized, LR_FRAME_TAIL)) ? 3 : 1;
         return; // 解析失败
     }
 }
