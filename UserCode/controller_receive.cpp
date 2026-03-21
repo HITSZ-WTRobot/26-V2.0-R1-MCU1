@@ -3,6 +3,7 @@
 #include "interboard_comm.hpp"
 #include "vision_lower_receive.hpp"
 #include "watchdog.hpp"
+#include <cstdint>
 #include <string.h>
 
 #define RAWDATA_SIZE 14   // 每一帧大小
@@ -21,6 +22,12 @@ static uint8_t rx_dma_buf[RX_DMA_BUF_SIZE];
 static uint8_t rx_frame_buf[RAWDATA_SIZE];
 static uint8_t rx_frame_fill = 0;
 static uint8_t lr_uart2_rx_byte = 0;
+
+volatile uint32_t vision_uart2_diag_rx_irq_cnt = 0;
+volatile uint32_t vision_uart2_diag_rx_byte_cnt = 0;
+volatile uint32_t vision_uart2_diag_rearm_fail_cnt = 0;
+volatile uint32_t vision_uart2_diag_err_cnt = 0;
+volatile uint32_t vision_uart2_diag_last_err_code = 0;
 uint32_t decodesuccess_count = 0;             // 成功解码次数
 bool decode_enable = false;                   // 解码使能标志
 bool is_controller_connected = true;          // 遥控器连接状态
@@ -203,8 +210,12 @@ void Controller_receiver_Init(void) {
   HAL_UARTEx_ReceiveToIdle_DMA(&huart1, rx_dma_buf, RX_DMA_BUF_SIZE);
   __HAL_DMA_DISABLE_IT(huart1.hdmarx, DMA_IT_HT);
 
-  HAL_UART_Receive_IT(&huart2, &lr_uart2_rx_byte, 1);
+  if (HAL_UART_Receive_IT(&huart2, &lr_uart2_rx_byte, 1) != HAL_OK) {
+    vision_uart2_diag_rearm_fail_cnt++;
+  }
 }
+
+uint8_t byte_test = 0;
 
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
   if (huart->Instance == USART1) {
@@ -212,8 +223,25 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
     HAL_UARTEx_ReceiveToIdle_DMA(&huart1, rx_dma_buf, RX_DMA_BUF_SIZE);
     __HAL_DMA_DISABLE_IT(huart1.hdmarx, DMA_IT_HT);
   } else if (huart->Instance == USART2) {
-    LR_Parse_And_Store(lr_uart2_rx_byte);
-    HAL_UART_Receive_IT(&huart2, &lr_uart2_rx_byte, 1);
+    const uint8_t rx_byte = lr_uart2_rx_byte;
+    vision_uart2_diag_rx_irq_cnt++;
+    vision_uart2_diag_rx_byte_cnt++;
+    LR_Parse_And_Store(rx_byte);
+    // 先重启接收，尽量缩短无保护窗口，避免连续字节导致ORE。
+    if (HAL_UART_Receive_IT(&huart2, &lr_uart2_rx_byte, 1) != HAL_OK) {
+      vision_uart2_diag_rearm_fail_cnt++;
+    }
+  }
+}
+
+void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart) {
+  if (huart->Instance == USART2) {
+    vision_uart2_diag_err_cnt++;
+    vision_uart2_diag_last_err_code = huart->ErrorCode;
+    if (HAL_UART_Receive_IT(&huart2, &lr_uart2_rx_byte, 1) != HAL_OK) {
+      vision_uart2_diag_rearm_fail_cnt++;
+
+    }
   }
 }
 
@@ -248,12 +276,13 @@ void controller_task(void *argument) {
       break;
     case AUTO_ALIGN_MODE:
       if (button_status & (1U << 8)) {
-        AbortAutoAlignAndStop();
-      } else if (InterboardComm_IsRetreatRequested()) {
-        ApplyInterboardRetreatByPosition();
-      } else if (g_interboard_retreat_active) {
-        ApplyInterboardRetreatByPosition();
-      } else {
+        AbortAutoAlignAndStop();}
+      // } else if (InterboardComm_IsRetreatRequested()) {
+      //   ApplyInterboardRetreatByPosition();
+      // } else if (g_interboard_retreat_active) {
+      //   ApplyInterboardRetreatByPosition();
+      // } 
+      else {
         ApplyVisionAutoAlign();
       }
       break;

@@ -64,6 +64,18 @@ extern LR_DataPacket lr_apriltag_buffer[LR_DATA_MAX_NUM];
 extern int           lr_apriltag_count;     // 当前有效数据量（≤LR_DATA_MAX_NUM）
 extern int           lr_apriltag_write_idx; // 下一个写入位置的索引
 
+// 解析最小诊断：用于确认串口数据是否被正确解析入库
+extern volatile uint32_t lr_diag_parse_ok_count;
+extern volatile uint32_t lr_diag_parse_fail_count;
+extern volatile float    lr_diag_last_x;
+extern volatile float    lr_diag_last_y;
+extern volatile float    lr_diag_last_z;
+extern volatile float    lr_diag_last_yaw;
+extern volatile uint8_t  lr_diag_last_type; // 0=detect, 1=apriltag
+extern volatile uint8_t  lr_diag_last_fail_stage; // 1=head/tail, 2=len, 3=number-parse
+extern volatile uint32_t lr_diag_last_raw_len;
+extern volatile char     lr_diag_last_raw_frame[LR_RX_BUFFER_SIZE];
+
 // ======================== 接口函数 ========================
 /**
  * @brief 串口接收中断中调用，逐字节缓存，遇到'\n'或,BB自动解析一帧
