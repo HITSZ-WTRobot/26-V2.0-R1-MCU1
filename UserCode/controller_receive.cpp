@@ -45,7 +45,9 @@ uint16_t LY; // 左摇杆y值数据原始数据
 uint16_t RX; // 右摇杆x值数据原始数据
 uint16_t RY; // 右摇杆y值数据原始数据
 
-int x,y,yaw; // 来自视觉的目标位置和朝向数据（单位米/度）
+float x = 0.0f,
+      y = 0.0f,
+      yaw = 0.0f; // 来自视觉的目标位置和朝向数据（单位米/度）
 
 bool joystick_button_L; // 左摇杆按键状态
 bool joystick_button_R; // 右摇杆按键状态
@@ -277,11 +279,11 @@ void controller_task(void *argument) {
     case AUTO_ALIGN_MODE:
       if (button_status & (1U << 8)) {
         AbortAutoAlignAndStop();}
-      // } else if (InterboardComm_IsRetreatRequested()) {
-      //   ApplyInterboardRetreatByPosition();
-      // } else if (g_interboard_retreat_active) {
-      //   ApplyInterboardRetreatByPosition();
-      // } 
+        else if (InterboardComm_IsRetreatRequested()) {// 远程请求后退优先级高于自动对齐，确保安全。
+        ApplyInterboardRetreatByPosition();
+      } else if (g_interboard_retreat_active) {// 如果正在执行远程后退，则持续执行，直到完成。避免在后退过程中被自动对齐命令打断。
+        ApplyInterboardRetreatByPosition();
+      } 
       else {
         ApplyVisionAutoAlign();
       }
