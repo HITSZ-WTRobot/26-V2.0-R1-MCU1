@@ -64,6 +64,10 @@ extern LR_DataPacket lr_apriltag_buffer[LR_DATA_MAX_NUM];
 extern int           lr_apriltag_count;     // 当前有效数据量（≤LR_DATA_MAX_NUM）
 extern int           lr_apriltag_write_idx; // 下一个写入位置的索引
 
+// 数据更新序号：每次对应类型成功解析后自增，可用于判断“最新到达的是哪一类数据”。
+extern volatile uint32_t lr_detect_update_seq;
+extern volatile uint32_t lr_apriltag_update_seq;
+
 // 解析最小诊断：用于确认串口数据是否被正确解析入库
 extern volatile uint32_t lr_diag_parse_ok_count;
 extern volatile uint32_t lr_diag_parse_fail_count;

@@ -114,18 +114,21 @@ static void ApplyVisionAutoAlign(void) {
   chassis_v.vy = 0.0f;
   chassis_v.wz = 0.0f;
 
-  const int has_apriltag = (lr_apriltag_count > 0);
-  const int has_detect = (lr_detect_count > 0);
+  const uint32_t apriltag_seq = lr_apriltag_update_seq;
+  const uint32_t detect_seq = lr_detect_update_seq;
+  const int has_apriltag = (apriltag_seq > 0U);
+  const int has_detect = (detect_seq > 0U);
   if (!has_apriltag && !has_detect) {
     // 无视觉数据时：进入按键步进位置环测试模式。
     ApplyButtonStepAlignFallback();
     return;
   }
-  auto_mode = has_apriltag ? 2 : 1; // 2=apriltag, 1=detect
+  const int use_apriltag = has_apriltag && (!has_detect || (apriltag_seq >= detect_seq));
+  auto_mode = use_apriltag ? 2 : 1; // 2=apriltag, 1=detect
   g_step_cmd_active = false;
 
   LR_DataPacket src = {0};
-  if (has_apriltag) {
+  if (use_apriltag) {
     const int latest_idx = (lr_apriltag_write_idx + LR_DATA_MAX_NUM - 1) % LR_DATA_MAX_NUM;
     src = lr_apriltag_buffer[latest_idx];
   } else {

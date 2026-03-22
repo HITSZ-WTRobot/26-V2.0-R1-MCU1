@@ -75,10 +75,12 @@ static LR_Vector3          g_arm_to_body_offset    = { -0.60f, 0.60f, 0.0f };// 
 LR_DataPacket lr_detect_buffer[LR_DATA_MAX_NUM];
 int           lr_detect_count     = 0; // 当前有效数据量
 int           lr_detect_write_idx = 0; // 写索引（下一个要写入的位置）
+volatile uint32_t lr_detect_update_seq = 0;
 
 LR_DataPacket lr_apriltag_buffer[LR_DATA_MAX_NUM];
 int           lr_apriltag_count     = 0; // 当前有效数据量
 int           lr_apriltag_write_idx = 0; // 写索引（下一个要写入的位置）
+volatile uint32_t lr_apriltag_update_seq = 0;
 
 static char lr_rx_line[LR_RX_BUFFER_SIZE];
 static int  lr_rx_line_pos = 0;
@@ -172,10 +174,12 @@ void LR_Clear_Data_Buffer(void)
     // 清空环形缓冲区所有状态
     lr_detect_count     = 0;
     lr_detect_write_idx = 0;
+    lr_detect_update_seq = 0;
     memset(lr_detect_buffer, 0, sizeof(lr_detect_buffer));
 
     lr_apriltag_count     = 0;
     lr_apriltag_write_idx = 0;
+    lr_apriltag_update_seq = 0;
     memset(lr_apriltag_buffer, 0, sizeof(lr_apriltag_buffer));
 }
 
@@ -247,13 +251,17 @@ static void LR_Parse_Frame(const char* frame)
         {
             lr_detect_count++;
         }
+        lr_detect_update_seq++;
         // （满员时：count保持MAX，写索引循环覆盖最旧数据）
 
         if (g_datatype_cb)
         {
             g_datatype_cb(0); // detect类型回调
         }
+        //缓冲区置零
+        
     }
+
     else if (n == 6)
     {
         pkt.x = values[0];
@@ -275,6 +283,7 @@ static void LR_Parse_Frame(const char* frame)
         {
             lr_apriltag_count++;
         }
+        lr_apriltag_update_seq++;
 
         if (g_datatype_cb)
         {
