@@ -66,8 +66,10 @@ static int LR_Parse_Floats(const char* text, float* out, int max_count)
 
 // ======================== 内部变量 ========================
 static LR_DataTypeCallback g_datatype_cb = NULL;
-static LR_Vector3          g_camera_to_body_offset = { 0.0f, 0.48f, 0.0f };// 视觉坐标系（相机）到机器人身体坐标系的偏移 单位米
-static LR_Vector3          g_arm_to_body_offset    = { -0.60f, 0.60f, 0.0f };// 视觉坐标系（相机）到机器人身体坐标系的偏移 单位米
+static LR_Vector3          g_camera_to_body_offset = { 0.48f, 0.0f, 0.0f };// 视觉坐标系（相机）到机器人身体坐标系的偏移 单位米x方向前正，y方向左正，z方向上正
+static LR_Vector3          g_arm_to_body_offset    = { 1.18f, 0.0f, 0.0f };// 视觉坐标系（相机）到机器人身体坐标系的偏移 单位米x方向前正，y方向左正，z方向上正
+static int yaw_camera_to_body_deg = 0; // 视觉坐标系（相机）到机器人身体坐标系的偏移 角度（单位度，正值表示相机坐标系相对于身体坐标系逆时针旋转）
+static int yaw_arm_to_body_deg    = 0; // 机械臂坐标系到机器人身体坐标系的偏移 角度（单位度，正值表示机械臂坐标系相对于身体坐标系逆时针旋转）
 
 // 已移除测试用全局诊断变量，生产/发布时请使用更轻量的日志或调试接口。
 
@@ -144,6 +146,34 @@ void LR_Convert_CameraPoint_To_Arm(float cam_x, float cam_y, float cam_z,
         *arm_y = body_y - g_arm_to_body_offset.y;
     if (arm_z)
         *arm_z = body_z - g_arm_to_body_offset.z;
+}
+
+void LR_Convert_Camerayaw_To_Body(float cam_yaw_deg, float* body_yaw_deg)
+{
+    if (body_yaw_deg)
+    {
+        *body_yaw_deg = cam_yaw_deg + yaw_camera_to_body_deg;
+        // 规范化到 [-180, 180)
+        while (*body_yaw_deg >= 180.0f)
+            *body_yaw_deg -= 360.0f;
+        while (*body_yaw_deg < -180.0f)
+            *body_yaw_deg += 360.0f;
+    }
+}
+
+void LR_Convert_Camerayaw_To_Arm(float cam_yaw_deg, float* arm_yaw_deg)
+{
+    float body_yaw_deg = 0.0f;
+    LR_Convert_Camerayaw_To_Body(cam_yaw_deg, &body_yaw_deg);
+    if (arm_yaw_deg)
+    {
+        *arm_yaw_deg = body_yaw_deg - yaw_arm_to_body_deg;
+        // 规范化到 [-180, 180)
+        while (*arm_yaw_deg >= 180.0f)
+            *arm_yaw_deg -= 360.0f;
+        while (*arm_yaw_deg < -180.0f)
+            *arm_yaw_deg += 360.0f;
+    }
 }
 
 LR_DataPacket LR_Convert_Packet_CameraToBody(const LR_DataPacket* cam_pkt)

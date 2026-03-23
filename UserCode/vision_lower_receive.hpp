@@ -135,6 +135,16 @@ void LR_Convert_CameraPoint_To_Arm(float cam_x, float cam_y, float cam_z,
                                    float* arm_x, float* arm_y, float* arm_z);
 
 /**
+ * @brief 将相机坐标系下的yaw角转换为车体坐标系下的yaw角
+ */
+void LR_Convert_Camerayaw_To_Body(float cam_yaw_deg, float* body_yaw_deg);
+
+/**
+ * @brief 将相机坐标系下的yaw角转换为机械臂坐标系下的yaw角
+ */
+void LR_Convert_Camerayaw_To_Arm(float cam_yaw_deg, float* arm_yaw_deg);
+
+/**
  * @brief 将数据包中的位置从相机基准转换为车体基准（姿态字段保持不变）
  */
 LR_DataPacket LR_Convert_Packet_CameraToBody(const LR_DataPacket* cam_pkt);

@@ -137,13 +137,17 @@ static void ApplyVisionAutoAlign(void) {
   }
 
   const LR_DataPacket body_pkt = LR_Convert_Packet_CameraToArm(&src);
+  LR_Convert_Camerayaw_To_Arm(src.yaw, &body_pkt.yaw);
 
-  x = body_pkt.x;
-  y = body_pkt.y;
+  // 视觉坐标语义：x=横向，y=竖直(此处不参与平面控制)，z=前后距离。
+  // 底盘平面控制映射：target_x(前后) <- z，target_y(横向) <- x。
+  x = body_pkt.z;
+  y = body_pkt.x;
   yaw = body_pkt.yaw;
   target_x = body_pkt.x;
   target_y = body_pkt.y;
-  target_yaw = body_pkt.yaw;
+  //在测试之前先不使用yaw控制，等确认坐标转换和数据稳定后再加yaw控制，避免不稳定的yaw导致底盘晃动。
+  //target_yaw = body_pkt.yaw;
 
 
   chassis_control_mode = POS_Control;
