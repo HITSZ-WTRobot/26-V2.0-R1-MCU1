@@ -3,6 +3,7 @@
 #include "interboard_comm.hpp"
 #include "vision_lower_receive.hpp"
 #include "watchdog.hpp"
+#include <cmath>
 #include <cstdint>
 #include <string.h>
 
@@ -22,6 +23,7 @@ static uint8_t rx_dma_buf[RX_DMA_BUF_SIZE];
 static uint8_t rx_frame_buf[RAWDATA_SIZE];
 static uint8_t rx_frame_fill = 0;
 static uint8_t lr_uart2_rx_byte = 0;
+static uint8_t interboard_uart4_rx_byte = 0;
 
 volatile uint32_t vision_uart2_diag_rx_irq_cnt = 0;
 volatile uint32_t vision_uart2_diag_rx_byte_cnt = 0;
@@ -66,14 +68,67 @@ const osThreadAttr_t controller_attributes = {
     .priority = (osPriority_t)osPriorityHigh,
 };
 
+// 滤波参数和状态
 constexpr float kAutoAlignStepM = 0.15f;
 constexpr float kInterboardRetreatDistanceM = 0.20f;
+constexpr float kMmToMScale = 0.001f;
+constexpr float kVisionLpfAlpha = 0.50f;
+constexpr float kVisionMaxStepPerCycleM = 0.03f;
+constexpr float kVisionPosDeadbandM = 0.01f;
 static bool g_step_cmd_active = false;
 static bool g_interboard_retreat_active = false;
 static bool g_interboard_retreat_last_req = false;
 static bool g_emergency_hold_active = false;
+static bool g_wait_interboard_target = false;
+static bool g_vision_filter_inited = false;
+static float g_target_x_filtered = 0.0f;
+static float g_target_y_filtered = 0.0f;
+
+static inline float ClampFloat(float value, float min_value, float max_value) {
+  return value < min_value ? min_value : (value > max_value ? max_value : value);
+}
+
+static void ResetVisionTargetFilter(void) {
+  g_vision_filter_inited = false;
+  g_target_x_filtered = 0.0f;
+  g_target_y_filtered = 0.0f;
+}
+
+static void ApplyVisionTargetFilter(float raw_x, float raw_y, float *out_x, float *out_y) {
+  if (!out_x || !out_y) {
+    return;
+  }
+
+  if (!g_vision_filter_inited) {
+    g_target_x_filtered = raw_x;
+    g_target_y_filtered = raw_y;
+    g_vision_filter_inited = true;
+  }
+
+  const float dx = ClampFloat(raw_x - g_target_x_filtered,
+                              -kVisionMaxStepPerCycleM,
+                              kVisionMaxStepPerCycleM);
+  const float dy = ClampFloat(raw_y - g_target_y_filtered,
+                              -kVisionMaxStepPerCycleM,
+                              kVisionMaxStepPerCycleM);
+
+  g_target_x_filtered += kVisionLpfAlpha * dx;
+  g_target_y_filtered += kVisionLpfAlpha * dy;
+
+  if (fabsf(g_target_x_filtered) < kVisionPosDeadbandM) {
+    g_target_x_filtered = 0.0f;
+  }
+  if (fabsf(g_target_y_filtered) < kVisionPosDeadbandM) {
+    g_target_y_filtered = 0.0f;
+  }
+
+  *out_x = g_target_x_filtered;
+  *out_y = g_target_y_filtered;
+}
 
 static void ApplyButtonStepAlignFallback(void) {
+  ResetVisionTargetFilter();
+
   const uint32_t event = button_status;
   float step_x = 0.0f;
   float step_y = 0.0f;
@@ -120,6 +175,7 @@ static void ApplyVisionAutoAlign(void) {
   const int has_detect = (detect_seq > 0U);
   if (!has_apriltag && !has_detect) {
     // 无视觉数据时：进入按键步进位置环测试模式。
+    ResetVisionTargetFilter();
     ApplyButtonStepAlignFallback();
     return;
   }
@@ -136,7 +192,7 @@ static void ApplyVisionAutoAlign(void) {
     src = lr_detect_buffer[latest_idx];
   }
 
-  const LR_DataPacket body_pkt = LR_Convert_Packet_CameraToArm(&src);
+  LR_DataPacket body_pkt = LR_Convert_Packet_CameraToArm(&src);
   LR_Convert_Camerayaw_To_Arm(src.yaw, &body_pkt.yaw);
 
   // 视觉坐标语义：x=横向，y=竖直(此处不参与平面控制)，z=前后距离。
@@ -144,8 +200,7 @@ static void ApplyVisionAutoAlign(void) {
   x = body_pkt.z;
   y = body_pkt.x;
   yaw = body_pkt.yaw;
-  target_x = body_pkt.x;
-  target_y = body_pkt.y;
+  ApplyVisionTargetFilter(body_pkt.x, body_pkt.y, &target_x, &target_y);
   //在测试之前先不使用yaw控制，等确认坐标转换和数据稳定后再加yaw控制，避免不稳定的yaw导致底盘晃动。
   //target_yaw = body_pkt.yaw;
 
@@ -154,6 +209,8 @@ static void ApplyVisionAutoAlign(void) {
 }
 
 static void AbortAutoAlignAndStop(void) {
+  ResetVisionTargetFilter();
+
   g_step_cmd_active = false;
   g_interboard_retreat_active = false;
   target_x = 0.0f;
@@ -165,7 +222,35 @@ static void AbortAutoAlignAndStop(void) {
   chassis_v.wz = 0.0f;
 }
 
+static bool TryApplyInterboardTarget(void) {
+  int32_t x_mm = 0;
+  int32_t y_mm = 0;
+  int32_t yaw_mm = 0;
+  if (!InterboardComm_TryConsumeTargetMm(&x_mm, &y_mm, &yaw_mm)) {
+    return false;
+  }
+
+  ResetVisionTargetFilter();
+  g_step_cmd_active = false;
+  g_interboard_retreat_active = false;
+
+  target_x = (float)x_mm * kMmToMScale;
+  target_y = (float)y_mm * kMmToMScale;
+  target_yaw = (float)yaw_mm * kMmToMScale;
+  chassis_control_mode = POS_Control;
+  return true;
+}
+
+static bool ArmActionKeyTriggered(void) {
+  const uint32_t event = button_status;
+  return ((event & (1U << 0)) != 0U) ||
+         ((event & (1U << 2)) != 0U) ||
+         ((event & (1U << 6)) != 0U);
+}
+
 static void ApplyInterboardRetreatByPosition(void) {
+  ResetVisionTargetFilter();
+
   const bool retreat_req = InterboardComm_IsRetreatRequested();
 
   // 上升沿触发一次固定距离后退，距离定义在 MCU1 侧。
@@ -225,6 +310,10 @@ void Controller_receiver_Init(void) {
   if (HAL_UART_Receive_IT(&huart2, &lr_uart2_rx_byte, 1) != HAL_OK) {
     vision_uart2_diag_rearm_fail_cnt++;
   }
+
+  if (HAL_UART_Receive_IT(&huart4, &interboard_uart4_rx_byte, 1) != HAL_OK) {
+    // UART4 版间通信若启动失败，InterboardComm 内部会保持超时保护。
+  }
 }
 
 uint8_t byte_test = 0;
@@ -244,6 +333,12 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
       return;
     }
     LR_Parse_And_Store(rx_byte);
+  } else if (huart->Instance == UART4) {
+    const uint8_t rx_byte = interboard_uart4_rx_byte;
+    if (HAL_UART_Receive_IT(&huart4, &interboard_uart4_rx_byte, 1) != HAL_OK) {
+      return;
+    }
+    InterboardComm_OnUartByte(rx_byte);
   }
 }
 
@@ -262,6 +357,13 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart) {
       vision_uart2_diag_rearm_fail_cnt++;
 
     }
+  } else if (huart->Instance == UART4) {
+    __HAL_UART_CLEAR_PEFLAG(huart);
+    __HAL_UART_CLEAR_FEFLAG(huart);
+    __HAL_UART_CLEAR_NEFLAG(huart);
+    __HAL_UART_CLEAR_OREFLAG(huart);
+
+    (void)HAL_UART_Receive_IT(&huart4, &interboard_uart4_rx_byte, 1);
   }
 }
 
@@ -282,12 +384,14 @@ void controller_task(void *argument) {
     }
     switch (joystick_mode) {
     case CHASSIS_MODE:
+      ResetVisionTargetFilter();
       chassis_control_mode = VEL_Control;
       chassis_v.vx = __JOYSTICK2VEL__(LY_T);
       chassis_v.vy = __JOYSTICK2VEL__(-1.0f * LX_T);
       chassis_v.wz = __JOYSTICK2WZ__(-1.0f * RX_T);
       break;
     case CLAMP_MODE:
+      ResetVisionTargetFilter();
       chassis_control_mode = VEL_Control;
       chassis_v.vx = 0;
       chassis_v.vy = 0;
@@ -295,6 +399,10 @@ void controller_task(void *argument) {
 
       break;
     case AUTO_ALIGN_MODE:
+      if (ArmActionKeyTriggered()) {
+        g_wait_interboard_target = true;
+      }
+
       if (button[8] || (button_status & (1U << 8))) {
         // 按下或触发按钮8都立即锁止，且按住期间持续锁止。
         g_emergency_hold_active = true;
@@ -302,9 +410,16 @@ void controller_task(void *argument) {
 
       if (g_emergency_hold_active) {
         AbortAutoAlignAndStop();
+        g_wait_interboard_target = false;
         if (!button[8]) {
           // 释放后退出锁止态，避免永久占用自动对齐流程。
           g_emergency_hold_active = false;
+        }
+      } else if (g_wait_interboard_target) {
+        // 收到机械臂动作按键后立即停对齐，等待MCU2下发目标信息。
+        AbortAutoAlignAndStop();
+        if (TryApplyInterboardTarget()) {
+          g_wait_interboard_target = false;
         }
       } else if (InterboardComm_IsRetreatRequested()) {// 远程请求后退优先级高于自动对齐，确保安全。
         ApplyInterboardRetreatByPosition();
@@ -358,7 +473,12 @@ void Buffer_Decode(void) {
       button_status |= (1 << i);
     }
   }
-  bbb = osEventFlagsSet(flags_id, button_status);
+  uint32_t publish_flags = button_status;
+  if (joystick_mode == AUTO_ALIGN_MODE) {
+    // 自动对齐模式下仅保留模式切换键事件，避免其他任务消费同一按键位产生冲突。
+    publish_flags &= (1U << 4);
+  }
+  bbb = osEventFlagsSet(flags_id, publish_flags);
   LX_T = (int16_t)LX;
   LY_T = (int16_t)LY;
   RX_T = (int16_t)RX;
