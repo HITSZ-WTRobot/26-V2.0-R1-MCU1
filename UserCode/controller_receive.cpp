@@ -1,5 +1,6 @@
 
 #include "controller_receive.hpp"
+#include "chassis.hpp"
 #include "interboard_comm.hpp"
 #include "vision_lower_receive.hpp"
 #include "watchdog.hpp"
@@ -72,9 +73,14 @@ const osThreadAttr_t controller_attributes = {
 constexpr float kAutoAlignStepM = 0.15f;
 constexpr float kInterboardRetreatDistanceM = 0.20f;
 constexpr float kMmToMScale = 0.001f;
-constexpr float kVisionLpfAlpha = 0.50f;
+constexpr float kVisionLpfAlpha = 0.85f;
 constexpr float kVisionMaxStepPerCycleM = 0.03f;
-constexpr float kVisionPosDeadbandM = 0.01f;
+constexpr float kVisionMaxStepPerCycleDeg = 12.0f;
+constexpr float kVisionPosDeadbandM = 0.03f;
+constexpr float kVisionYawLpfAlpha = 0.60f;
+constexpr float kVisionYawDeadbandDeg = 0.8f;
+constexpr float kAutoAlignYawLockDeg = 2.0f;
+constexpr uint32_t kVisionLostCycleThreshold = 10U; // controller_task 10ms周期，约100ms
 static bool g_step_cmd_active = false;
 static bool g_interboard_retreat_active = false;
 static bool g_interboard_retreat_last_req = false;
@@ -83,6 +89,9 @@ static bool g_wait_interboard_target = false;
 static bool g_vision_filter_inited = false;
 static float g_target_x_filtered = 0.0f;
 static float g_target_y_filtered = 0.0f;
+static uint32_t g_vision_last_update_seq = 0U;
+static uint32_t g_vision_stale_cycles = 0U;
+static bool g_auto_align_translation_phase = false;
 
 static inline float ClampFloat(float value, float min_value, float max_value) {
   return value < min_value ? min_value : (value > max_value ? max_value : value);
@@ -92,6 +101,15 @@ static void ResetVisionTargetFilter(void) {
   g_vision_filter_inited = false;
   g_target_x_filtered = 0.0f;
   g_target_y_filtered = 0.0f;
+}
+
+static void ResetVisionSignalState(void) {
+  g_vision_last_update_seq = 0U;
+  g_vision_stale_cycles = 0U;
+}
+
+static void ResetAutoAlignPhaseState(void) {
+  g_auto_align_translation_phase = false;
 }
 
 static void ApplyVisionTargetFilter(float raw_x, float raw_y, float *out_x, float *out_y) {
@@ -126,7 +144,26 @@ static void ApplyVisionTargetFilter(float raw_x, float raw_y, float *out_x, floa
   *out_y = g_target_y_filtered;
 }
 
-static void ApplyButtonStepAlignFallback(void) {
+static void ApplyYawTargetFilter(float raw_yaw, float *yaw)
+{
+  if (!yaw)
+  {
+    return;
+  }
+
+  const float dyaw = ClampFloat(raw_yaw - *yaw,
+                              -kVisionMaxStepPerCycleDeg,
+                              kVisionMaxStepPerCycleDeg);
+  float yaw_output = *yaw + kVisionYawLpfAlpha * dyaw;
+
+  if (fabsf(yaw_output) < kVisionYawDeadbandDeg) {
+    yaw_output = 0.0f;
+  }
+
+  *yaw = yaw_output;
+} 
+
+[[maybe_unused]] static void ApplyButtonStepAlignFallback(void) {
   ResetVisionTargetFilter();
 
   const uint32_t event = button_status;
@@ -164,21 +201,34 @@ static void ApplyButtonStepAlignFallback(void) {
   chassis_control_mode = POS_Control;
 }
 
-static void ApplyVisionAutoAlign(void) {
+static bool ApplyVisionAutoAlign(void) {
   chassis_v.vx = 0.0f;
   chassis_v.vy = 0.0f;
   chassis_v.wz = 0.0f;
 
   const uint32_t apriltag_seq = lr_apriltag_update_seq;
   const uint32_t detect_seq = lr_detect_update_seq;
+  const uint32_t latest_seq = (apriltag_seq >= detect_seq) ? apriltag_seq : detect_seq;
   const int has_apriltag = (apriltag_seq > 0U);
   const int has_detect = (detect_seq > 0U);
   if (!has_apriltag && !has_detect) {
-    // 无视觉数据时：进入按键步进位置环测试模式。
-    ResetVisionTargetFilter();
-    ApplyButtonStepAlignFallback();
-    return;
+    auto_mode = 0;
+    return false;
   }
+
+  if (g_vision_last_update_seq == 0U || latest_seq != g_vision_last_update_seq) {
+    g_vision_last_update_seq = latest_seq;
+    g_vision_stale_cycles = 0U;
+  } else {
+    if (g_vision_stale_cycles < 0xFFFFFFFFU) {
+      g_vision_stale_cycles++;
+    }
+    if (g_vision_stale_cycles > kVisionLostCycleThreshold) {
+      auto_mode = 0;
+      return false;
+    }
+  }
+
   const int use_apriltag = has_apriltag && (!has_detect || (apriltag_seq >= detect_seq));
   auto_mode = use_apriltag ? 2 : 1; // 2=apriltag, 1=detect
   g_step_cmd_active = false;
@@ -197,22 +247,41 @@ static void ApplyVisionAutoAlign(void) {
 
   // 视觉坐标语义：x=横向，y=竖直(此处不参与平面控制)，z=前后距离。
   // 底盘平面控制映射：target_x(前后) <- z，target_y(横向) <- x。
-  x = body_pkt.z;
-  y = body_pkt.x;
+  x = body_pkt.x;
+  y = -body_pkt.y;
   yaw = body_pkt.yaw;
-  ApplyVisionTargetFilter(body_pkt.x, body_pkt.y, &target_x, &target_y);
-  //在测试之前先不使用yaw控制，等确认坐标转换和数据稳定后再加yaw控制，避免不稳定的yaw导致底盘晃动。
-  //target_yaw = body_pkt.yaw;
+
+  const float yaw_error = -body_pkt.yaw;
+  if (!g_auto_align_translation_phase) {
+    // 第一阶段只做角度对齐，位置锁止，避免角度与平移互相干扰。
+    target_x = 0.0f;
+    target_y = 0.0f;
+    ApplyYawTargetFilter(yaw_error, &target_yaw);
+
+    if (fabsf(yaw_error) <= kAutoAlignYawLockDeg) {
+      g_auto_align_translation_phase = true;
+      ResetVisionTargetFilter();
+    }
+  } else {
+    // 进入第二阶段后只做位置对齐，不再回到角度对齐。
+    ApplyVisionTargetFilter(body_pkt.x, -body_pkt.y, &target_x, &target_y);
+    target_yaw = 0.0f;
+  }
+
 
 
   chassis_control_mode = POS_Control;
+  return true;
 }
 
 static void AbortAutoAlignAndStop(void) {
   ResetVisionTargetFilter();
+  ResetVisionSignalState();
+  ResetAutoAlignPhaseState();
 
   g_step_cmd_active = false;
   g_interboard_retreat_active = false;
+  auto_mode = 0;
   target_x = 0.0f;
   target_y = 0.0f;
   target_yaw = 0.0f;
@@ -231,8 +300,11 @@ static bool TryApplyInterboardTarget(void) {
   }
 
   ResetVisionTargetFilter();
+  ResetAutoAlignPhaseState();
   g_step_cmd_active = false;
-  g_interboard_retreat_active = false;
+  // Keep retreat path latched until trajectory finishes, otherwise
+  // AUTO_ALIGN vision branch may overwrite the freshly received target.
+  g_interboard_retreat_active = true;
 
   target_x = (float)x_mm * kMmToMScale;
   target_y = (float)y_mm * kMmToMScale;
@@ -250,6 +322,7 @@ static bool ArmActionKeyTriggered(void) {
 
 static void ApplyInterboardRetreatByPosition(void) {
   ResetVisionTargetFilter();
+  ResetAutoAlignPhaseState();
 
   const bool retreat_req = InterboardComm_IsRetreatRequested();
 
@@ -385,6 +458,8 @@ void controller_task(void *argument) {
     switch (joystick_mode) {
     case CHASSIS_MODE:
       ResetVisionTargetFilter();
+      ResetVisionSignalState();
+      ResetAutoAlignPhaseState();
       chassis_control_mode = VEL_Control;
       chassis_v.vx = __JOYSTICK2VEL__(LY_T);
       chassis_v.vy = __JOYSTICK2VEL__(-1.0f * LX_T);
@@ -392,6 +467,8 @@ void controller_task(void *argument) {
       break;
     case CLAMP_MODE:
       ResetVisionTargetFilter();
+      ResetVisionSignalState();
+      ResetAutoAlignPhaseState();
       chassis_control_mode = VEL_Control;
       chassis_v.vx = 0;
       chassis_v.vy = 0;
@@ -427,7 +504,9 @@ void controller_task(void *argument) {
         ApplyInterboardRetreatByPosition();
       } 
       else {
-        ApplyVisionAutoAlign();
+        if (!ApplyVisionAutoAlign()) {
+          AbortAutoAlignAndStop();
+        }
       }
       break;
     default:

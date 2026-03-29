@@ -67,7 +67,7 @@ static int LR_Parse_Floats(const char* text, float* out, int max_count)
 // ======================== 内部变量 ========================
 static LR_DataTypeCallback g_datatype_cb = NULL;
 static LR_Vector3          g_camera_to_body_offset = { 0.48f, 0.0f, 0.0f };// 视觉坐标系（相机）到机器人身体坐标系的偏移 单位米x方向前正，y方向左正，z方向上正
-static LR_Vector3          g_arm_to_body_offset    = { 1.18f, 0.0f, 0.0f };// 视觉坐标系（相机）到机器人身体坐标系的偏移 单位米x方向前正，y方向左正，z方向上正
+static LR_Vector3          g_arm_to_body_offset    = { 1.38f, 0.0f, 0.0f };// 视觉坐标系（相机）到机器人身体坐标系的偏移 单位米x方向前正，y方向左正，z方向上正
 static int yaw_camera_to_body_deg = 0; // 视觉坐标系（相机）到机器人身体坐标系的偏移 角度（单位度，正值表示相机坐标系相对于身体坐标系逆时针旋转）
 static int yaw_arm_to_body_deg    = 0; // 机械臂坐标系到机器人身体坐标系的偏移 角度（单位度，正值表示机械臂坐标系相对于身体坐标系逆时针旋转）
 
