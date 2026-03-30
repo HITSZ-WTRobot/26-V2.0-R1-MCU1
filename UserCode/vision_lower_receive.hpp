@@ -64,6 +64,22 @@ extern LR_DataPacket lr_apriltag_buffer[LR_DATA_MAX_NUM];
 extern int           lr_apriltag_count;     // 当前有效数据量（≤LR_DATA_MAX_NUM）
 extern int           lr_apriltag_write_idx; // 下一个写入位置的索引
 
+// 数据更新序号：每次对应类型成功解析后自增，可用于判断“最新到达的是哪一类数据”。
+extern volatile uint32_t lr_detect_update_seq;
+extern volatile uint32_t lr_apriltag_update_seq;
+
+// 解析最小诊断：用于确认串口数据是否被正确解析入库
+extern volatile uint32_t lr_diag_parse_ok_count;
+extern volatile uint32_t lr_diag_parse_fail_count;
+extern volatile float    lr_diag_last_x;
+extern volatile float    lr_diag_last_y;
+extern volatile float    lr_diag_last_z;
+extern volatile float    lr_diag_last_yaw;
+extern volatile uint8_t  lr_diag_last_type; // 0=detect, 1=apriltag
+extern volatile uint8_t  lr_diag_last_fail_stage; // 1=head/tail, 2=len, 3=number-parse
+extern volatile uint32_t lr_diag_last_raw_len;
+extern volatile char     lr_diag_last_raw_frame[LR_RX_BUFFER_SIZE];
+
 // ======================== 接口函数 ========================
 /**
  * @brief 串口接收中断中调用，逐字节缓存，遇到'\n'或,BB自动解析一帧
@@ -117,6 +133,16 @@ void LR_Convert_CameraPoint_To_Body(float cam_x, float cam_y, float cam_z,
  */
 void LR_Convert_CameraPoint_To_Arm(float cam_x, float cam_y, float cam_z,
                                    float* arm_x, float* arm_y, float* arm_z);
+
+/**
+ * @brief 将相机坐标系下的yaw角转换为车体坐标系下的yaw角
+ */
+void LR_Convert_Camerayaw_To_Body(float cam_yaw_deg, float* body_yaw_deg);
+
+/**
+ * @brief 将相机坐标系下的yaw角转换为机械臂坐标系下的yaw角
+ */
+void LR_Convert_Camerayaw_To_Arm(float cam_yaw_deg, float* arm_yaw_deg);
 
 /**
  * @brief 将数据包中的位置从相机基准转换为车体基准（姿态字段保持不变）

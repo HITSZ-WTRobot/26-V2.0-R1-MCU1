@@ -21,9 +21,9 @@ constexpr velocity_profile::SCurveProfile::Config kTranslationLimit = {
 };
 
 constexpr velocity_profile::SCurveProfile::Config kRotationLimit = {
-    .max_spd = 45.0f,
-    .max_acc = 22.5f,
-    .max_jerk = 180.0f,
+  .max_spd = 90.0f,
+  .max_acc = 120.0f,
+  .max_jerk = 720.0f,
 };
 chassis::motion::Omni4* omni4;
 controllers::MotorVelController *motor_vel_ctrl[4]{};
@@ -70,7 +70,7 @@ void APP_Chassis_BeforeUpdate() {
               {
                   .vx = {.Kp = 2.0f, .Kd = 1.0f, .abs_output_max = 0.1f},
                   .vy = {.Kp = 2.0f, .Kd = 1.0f, .abs_output_max = 0.1f},
-                  .wz = {.Kp = 2.0f, .Kd = 1.0f, .abs_output_max = 25.0f},
+                    .wz = {.Kp = 4.0f, .Kd = 1.5f, .abs_output_max = 60.0f},
               },
           .limit =
               {

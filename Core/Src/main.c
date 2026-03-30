@@ -97,8 +97,9 @@ int main(void)
   MX_CAN2_Init();
   MX_TIM6_Init();
   MX_USART1_UART_Init();
-  MX_USART2_UART_Init();
   MX_TIM10_Init();
+  MX_USART2_UART_Init();
+  MX_UART4_Init();
   /* USER CODE BEGIN 2 */
 
   /* USER CODE END 2 */
