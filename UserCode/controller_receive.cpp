@@ -79,7 +79,7 @@ constexpr float kVisionMaxStepPerCycleDeg = 12.0f;
 constexpr float kVisionPosDeadbandM = 0.03f;
 constexpr float kVisionYawLpfAlpha = 0.60f;
 constexpr float kVisionYawDeadbandDeg = 0.8f;
-constexpr uint32_t kVisionSampleFrameCount = 10U;
+constexpr float kAutoAlignYawLockDeg = 2.0f;
 constexpr uint32_t kVisionLostCycleThreshold = 10U; // controller_task 10ms周期，约100ms
 static bool g_step_cmd_active = false;
 static bool g_interboard_retreat_active = false;
@@ -91,37 +91,10 @@ static float g_target_x_filtered = 0.0f;
 static float g_target_y_filtered = 0.0f;
 static uint32_t g_vision_last_update_seq = 0U;
 static uint32_t g_vision_stale_cycles = 0U;
-static bool g_auto_align_target_latched = false;
-static bool g_auto_align_completed_hold = false;
-static uint32_t g_auto_align_last_sample_seq = 0U;
-static uint32_t g_auto_align_sample_count = 0U;
-static float g_auto_align_sum_x = 0.0f;
-static float g_auto_align_sum_y = 0.0f;
-static float g_auto_align_sum_yaw = 0.0f;
+static bool g_auto_align_translation_phase = false;
 
 static inline float ClampFloat(float value, float min_value, float max_value) {
   return value < min_value ? min_value : (value > max_value ? max_value : value);
-}
-
-static void CompensateTargetByCameraOffsetAndYaw(float raw_x, float raw_y,
-                                                 float yaw_deg,
-                                                 float *out_x,
-                                                 float *out_y) {
-  if (!out_x || !out_y) {
-    return;
-  }
-
-  const LR_Vector3 cam_offset = LR_Get_Camera_To_Body_Offset();
-  const float yaw_rad = yaw_deg * (3.14159265358979323846f / 180.0f);
-  const float c = cosf(yaw_rad);
-  const float s = sinf(yaw_rad);
-
-  // t = v - (R(yaw)-I)*r_cam，补偿旋转时相机偏置引入的等效平移误差。
-  const float delta_x = (c - 1.0f) * cam_offset.x - s * cam_offset.y;
-  const float delta_y = s * cam_offset.x + (c - 1.0f) * cam_offset.y;
-
-  *out_x = raw_x - delta_x;
-  *out_y = raw_y - delta_y;
 }
 
 static void ResetVisionTargetFilter(void) {
@@ -136,16 +109,10 @@ static void ResetVisionSignalState(void) {
 }
 
 static void ResetAutoAlignPhaseState(void) {
-  g_auto_align_target_latched = false;
-  g_auto_align_completed_hold = false;
-  g_auto_align_last_sample_seq = 0U;
-  g_auto_align_sample_count = 0U;
-  g_auto_align_sum_x = 0.0f;
-  g_auto_align_sum_y = 0.0f;
-  g_auto_align_sum_yaw = 0.0f;
+  g_auto_align_translation_phase = false;
 }
 
-[[maybe_unused]] static void ApplyVisionTargetFilter(float raw_x, float raw_y, float *out_x, float *out_y) {
+static void ApplyVisionTargetFilter(float raw_x, float raw_y, float *out_x, float *out_y) {
   if (!out_x || !out_y) {
     return;
   }
@@ -177,7 +144,7 @@ static void ResetAutoAlignPhaseState(void) {
   *out_y = g_target_y_filtered;
 }
 
-[[maybe_unused]] static void ApplyYawTargetFilter(float raw_yaw, float *yaw)
+static void ApplyYawTargetFilter(float raw_yaw, float *yaw)
 {
   if (!yaw)
   {
@@ -239,30 +206,6 @@ static bool ApplyVisionAutoAlign(void) {
   chassis_v.vy = 0.0f;
   chassis_v.wz = 0.0f;
 
-  // 一次自动对齐完成后保持静止，避免再次采样触发二次转向。
-  if (g_auto_align_completed_hold) {
-    chassis_control_mode = VEL_Control;
-    target_x = 0.0f;
-    target_y = 0.0f;
-    target_yaw = 0.0f;
-    return true;
-  }
-
-  // 已锁定目标后仅执行轨迹，不再受视觉反馈控制。
-  if (g_auto_align_target_latched) {
-    chassis_control_mode = POS_Control;
-    if (chassis_ && chassis_->isTrajectoryFinished()) {
-      g_auto_align_target_latched = false;
-      g_auto_align_completed_hold = true;
-      chassis_control_mode = VEL_Control;
-      target_x = 0.0f;
-      target_y = 0.0f;
-      target_yaw = 0.0f;
-      return true;
-    }
-    return true;
-  }
-
   const uint32_t apriltag_seq = lr_apriltag_update_seq;
   const uint32_t detect_seq = lr_detect_update_seq;
   const uint32_t latest_seq = (apriltag_seq >= detect_seq) ? apriltag_seq : detect_seq;
@@ -299,50 +242,13 @@ static bool ApplyVisionAutoAlign(void) {
     src = lr_detect_buffer[latest_idx];
   }
 
-  LR_DataPacket body_pkt = LR_Convert_Packet_CameraToBody(&src);
-  LR_Convert_Camerayaw_To_Body(src.yaw, &body_pkt.yaw);
+  float cam_x = src.x;
+  float cam_y = src.y;
+  float cam_z = src.z;
+  float cam_yaw = src.yaw;
+  //直接走向目标点，暂不区分旋转和位移阶段，开环控制，后续可增加分阶段闭环控制
+  LR_Compute_Target(cam_x, cam_y, cam_z, cam_yaw, &target_x, &target_y, &target_yaw);
 
-  // 视觉坐标语义：x=横向，y=竖直(此处不参与平面控制)，z=前后距离。
-  // 底盘平面控制映射：target_x(前后) <- z，target_y(横向) <- x。
-  x = body_pkt.x;
-  y = -body_pkt.y;
-
-  if (latest_seq != g_auto_align_last_sample_seq) {
-    g_auto_align_last_sample_seq = latest_seq;
-    g_auto_align_sum_x += body_pkt.x;
-    g_auto_align_sum_y += -body_pkt.y;
-    g_auto_align_sum_yaw += -body_pkt.yaw;
-    if (g_auto_align_sample_count < kVisionSampleFrameCount) {
-      g_auto_align_sample_count++;
-    }
-    target_yaw = 0.0f;
-  }
-  // 采样阶段保持静止，收满10帧后一次性下发目标。
-  if (g_auto_align_sample_count < kVisionSampleFrameCount) {
-    chassis_control_mode = VEL_Control;
-    target_x = 0.0f;
-    target_y = 0.0f;
-    target_yaw = 0.0f;
-    return true;
-  }
-
-  const float inv_count = 1.0f / (float)kVisionSampleFrameCount;
-  const float avg_x = g_auto_align_sum_x * inv_count;
-  const float avg_y = g_auto_align_sum_y * inv_count;
-  // 同时下发平移与角度目标；执行过程中锁定，不再实时跟随视觉。
-  target_yaw = g_auto_align_sum_yaw * inv_count;
-  CompensateTargetByCameraOffsetAndYaw(avg_x, avg_y, target_yaw, &target_x, &target_y);
-  g_auto_align_target_latched = true;
-  g_step_cmd_active = false;
-
-  g_auto_align_sum_x = 0.0f;
-  g_auto_align_sum_y = 0.0f;
-  g_auto_align_sum_yaw = 0.0f;
-  g_auto_align_sample_count = 0U;
-
-
-  chassis_control_mode = POS_Control;
-  return true;
 }
 
 static void AbortAutoAlignAndStop(void) {

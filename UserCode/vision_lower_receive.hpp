@@ -32,6 +32,8 @@ extern "C"
 #define LR_RX_BUFFER_SIZE 128
 // 可缓存的数据包最大数量（环形缓冲区大小）
 #define LR_DATA_MAX_NUM 10
+//摄像头倒立正立，0=正立，1=倒立（影响坐标转换）
+#define LR_CAMERA_REVERSED 1
 
 // ======================== 数据结构 ========================
 /**
@@ -143,6 +145,14 @@ void LR_Convert_Camerayaw_To_Body(float cam_yaw_deg, float* body_yaw_deg);
  * @brief 将相机坐标系下的yaw角转换为机械臂坐标系下的yaw角
  */
 void LR_Convert_Camerayaw_To_Arm(float cam_yaw_deg, float* arm_yaw_deg);
+
+/**
+ @brief 解算位置后的目标位置
+ */
+
+void LR_Compute_Target(float x, float y, float z, float yaw,
+                       float* target_x, float* target_y, float* target_yaw);
+
 
 /**
  * @brief 将数据包中的位置从相机基准转换为车体基准（姿态字段保持不变）
