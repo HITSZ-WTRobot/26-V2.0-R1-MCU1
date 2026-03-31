@@ -163,12 +163,13 @@ static void ApplyYawTargetFilter(float raw_yaw, float *yaw)
   *yaw = yaw_output;
 } 
 
-[[maybe_unused]] static void ApplyButtonStepAlignFallback(void) {
+static void ApplyButtonStepAlignFallback(void) {
   ResetVisionTargetFilter();
 
   const uint32_t event = button_status;
   float step_x = 0.0f;
   float step_y = 0.0f;
+  float step_yaw = 0.0f;
 
   // Keep current step target until chassis reports trajectory finished.
   if (g_step_cmd_active) {
@@ -186,17 +187,21 @@ static void ApplyYawTargetFilter(float raw_yaw, float *yaw)
   // 按键索引与编号关系：button1->bit0, button3->bit2, button5->bit4, button7->bit6.
   if (event & (1U << 1)) {
     step_x = kAutoAlignStepM;
+    step_yaw = 5.0f; // 同时增加一个小的旋转，帮助打破纯平移可能遇到的局部最优问题。
   } else if (event & (1U << 3)) {
     step_y = kAutoAlignStepM;
+    step_yaw = -5.0f;
   } else if (event & (1U << 5)) {
     step_y = -kAutoAlignStepM;
+    step_yaw = 5.0f;
   } else if (event & (1U << 7)) {
     step_x = -kAutoAlignStepM;
+    step_yaw = -5.0f;
   }
 
   target_x = step_x;
   target_y = step_y;
-  target_yaw = 0.0f;
+  target_yaw = step_yaw;
   g_step_cmd_active = (step_x != 0.0f || step_y != 0.0f);
   chassis_control_mode = POS_Control;
 }
@@ -482,7 +487,7 @@ void controller_task(void *argument) {
       } 
       else {
         if (!ApplyVisionAutoAlign()) {
-          AbortAutoAlignAndStop();
+          ApplyButtonStepAlignFallback();
         }
       }
       break;
