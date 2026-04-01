@@ -1,6 +1,6 @@
 #include "chassis.hpp"
 
-#include "JustEncoder/JustEncoder.hpp"
+#include "JustEncoder.hpp"
 #include "device.hpp"
 #include "main.h"
 
@@ -25,8 +25,7 @@ constexpr velocity_profile::SCurveProfile::Config kRotationLimit = {
     .max_acc = 22.5f,
     .max_jerk = 180.0f,
 };
-
-chassis_loc::JustEncoder *chassis_loc_ = nullptr;
+chassis::motion::Omni4* omni4;
 controllers::MotorVelController *motor_vel_ctrl[4]{};
 
 float target_x_last = 0.0f;
@@ -35,25 +34,24 @@ float target_yaw_last = 0.0f;
 
 } // namespace
 
+ChassisLoc*        loc_encoder;
+ChassisController* chassis_;
+
 float target_x = 0.0f;
 float target_y = 0.0f;
 float target_yaw = 0.0f;
 Control_Mode chassis_control_mode = VEL_Control;
 Chassis_Velocity_t chassis_v = {0.0f, 0.0f, 0.0f};
-Chassis *chassis_ = nullptr;
 
 void APP_Chassis_BeforeUpdate() {
-  using chassis::Omni4;
+  using chassis::motion::Omni4;
   using controllers::MotorVelController;
 
   for (size_t i = 0; i < 4; ++i)
     motor_vel_ctrl[i] =
         new MotorVelController(motor_wheel[i], {.pid = motor_wheel_vel_pid});
 
-  chassis_loc_ = new chassis_loc::JustEncoder();
-
-  chassis_ = new Chassis(
-      Omni4(*chassis_loc_,
+  omni4 = new Omni4(
             {
                 .wheel_radius = 63.5f,
                 .wheel_distance_x = 820.23f,
@@ -62,7 +60,11 @@ void APP_Chassis_BeforeUpdate() {
                 .wheel_front_left = motor_vel_ctrl[1],
                 .wheel_rear_left = motor_vel_ctrl[2],
                 .wheel_rear_right = motor_vel_ctrl[3],
-            }),
+            });
+    
+  loc_encoder = new ChassisLoc(*omni4);
+
+  chassis_ = new ChassisController(*omni4, *loc_encoder,
       {
           .posture_error_pd_cfg =
               {
@@ -82,7 +84,7 @@ void APP_Chassis_BeforeUpdate() {
 void APP_Chassis_InitBeforeUpdate() { APP_Chassis_BeforeUpdate(); }
 
 void APP_Chassis_Init() {
-  if (!chassis_ || !chassis_loc_)
+  if (!chassis_ || !loc_encoder)
     Error_Handler();
 
   if (!chassis_->enable())
@@ -99,10 +101,10 @@ void APP_Chassis_Init() {
 }
 
 void Chassis_TIM_Callback() {
-  if (!chassis_ || !chassis_loc_ || !chassis_->enabled())
+  if (!chassis_ || !loc_encoder || !chassis_->enabled())
     return;
 
-  chassis_loc_->update(kControlDt);
+  loc_encoder->update(kControlDt);
 
   switch (chassis_control_mode) {
   case POS_Control:

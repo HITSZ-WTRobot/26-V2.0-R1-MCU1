@@ -1,9 +1,12 @@
 
 #include "controller_receive.hpp"
+#include "vision_lower_receive.hpp"
 #include "watchdog.hpp"
+#include <string.h>
 
 #define RAWDATA_SIZE 14   // 每一帧大小
 #define BUFFER_SIZE 14    // DMA接收缓冲区大小
+#define RX_DMA_BUF_SIZE 64
 #define FRAME_HEADER 0xAA // 帧头
 #define FRAME_TAIL 0xBB   // 帧尾
 #define BUTTON_NUM 9      // 按钮个数
@@ -13,6 +16,9 @@ uint32_t bbb = 0;
 
 uint32_t decode_count = 0;
 uint8_t buffer[14];
+static uint8_t rx_dma_buf[RX_DMA_BUF_SIZE];
+static uint8_t rx_frame_buf[RAWDATA_SIZE];
+static uint8_t rx_frame_fill = 0;
 uint32_t decodesuccess_count = 0;             // 成功解码次数
 bool decode_enable = false;                   // 解码使能标志
 bool is_controller_connected = true;          // 遥控器连接状态
@@ -45,21 +51,120 @@ const osThreadAttr_t controller_attributes = {
     .priority = (osPriority_t)osPriorityHigh,
 };
 
+constexpr float kAutoAlignStepM = 0.15f;
+static bool g_step_cmd_active = false;
+
+static void ApplyButtonStepAlignFallback(void) {
+  const uint32_t event = button_status;
+  float step_x = 0.0f;
+  float step_y = 0.0f;
+
+  // Keep current step target until chassis reports trajectory finished.
+  if (g_step_cmd_active) {
+    chassis_control_mode = POS_Control;
+    if (chassis_ && chassis_->isTrajectoryFinished()) {
+      target_x = 0.0f;
+      target_y = 0.0f;
+      target_yaw = 0.0f;
+      g_step_cmd_active = false;
+    }
+    return;
+  }
+
+  // keypad 1/3/5/7 -> 前/左/右/后，每次按下步进0.05m。
+  // 按键索引与编号关系：button1->bit0, button3->bit2, button5->bit4, button7->bit6.
+  if (event & (1U << 1)) {
+    step_x = kAutoAlignStepM;
+  } else if (event & (1U << 3)) {
+    step_y = kAutoAlignStepM;
+  } else if (event & (1U << 5)) {
+    step_y = -kAutoAlignStepM;
+  } else if (event & (1U << 7)) {
+    step_x = -kAutoAlignStepM;
+  }
+
+  target_x = step_x;
+  target_y = step_y;
+  target_yaw = 0.0f;
+  g_step_cmd_active = (step_x != 0.0f || step_y != 0.0f);
+  chassis_control_mode = POS_Control;
+}
+
+static void ApplyVisionAutoAlign(void) {
+  chassis_v.vx = 0.0f;
+  chassis_v.vy = 0.0f;
+  chassis_v.wz = 0.0f;
+
+  const int has_apriltag = (lr_apriltag_count > 0);
+  const int has_detect = (lr_detect_count > 0);
+  if (!has_apriltag && !has_detect) {
+    // 无视觉数据时：进入按键步进位置环测试模式。
+    ApplyButtonStepAlignFallback();
+    return;
+  }
+
+  g_step_cmd_active = false;
+
+  LR_DataPacket src = {0};
+  if (has_apriltag) {
+    const int latest_idx = (lr_apriltag_write_idx + LR_DATA_MAX_NUM - 1) % LR_DATA_MAX_NUM;
+    src = lr_apriltag_buffer[latest_idx];
+  } else {
+    const int latest_idx = (lr_detect_write_idx + LR_DATA_MAX_NUM - 1) % LR_DATA_MAX_NUM;
+    src = lr_detect_buffer[latest_idx];
+  }
+
+  const LR_DataPacket body_pkt = LR_Convert_Packet_CameraToArm(&src);
+
+  target_x = body_pkt.x;
+  target_y = body_pkt.y;
+  target_yaw = body_pkt.yaw;
+  chassis_control_mode = POS_Control;
+}
+
+static void ProcessRxBytes(const uint8_t *data, uint16_t size) {
+  for (uint16_t i = 0; i < size; ++i) {
+    const uint8_t byte = data[i];
+
+    // 等待帧头，避免固定分包错位导致长期解码失败。
+    if (rx_frame_fill == 0U && byte != FRAME_HEADER) {
+      continue;
+    }
+
+    rx_frame_buf[rx_frame_fill++] = byte;
+
+    if (rx_frame_fill >= RAWDATA_SIZE) {
+      decode_count++;
+      memcpy(buffer, rx_frame_buf, RAWDATA_SIZE);
+      Buffer_Decode();
+      rx_frame_fill = 0U;
+    }
+  }
+}
+
 void Controller_receiver_Init(void) {
   for (int i = 0; i < BUTTON_NUM; i++) {
     button[i] = 0;
     button_last[i] = 0;
   }
   osThreadNew(controller_task, NULL, &controller_attributes);
-  HAL_UART_Receive_DMA(&huart1, buffer, 14);
+  HAL_UARTEx_ReceiveToIdle_DMA(&huart1, rx_dma_buf, RX_DMA_BUF_SIZE);
+  __HAL_DMA_DISABLE_IT(huart1.hdmarx, DMA_IT_HT);
 }
 
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
   if (huart->Instance == USART1) {
-    decode_count++;
+    ProcessRxBytes(rx_dma_buf, RX_DMA_BUF_SIZE);
+    HAL_UARTEx_ReceiveToIdle_DMA(&huart1, rx_dma_buf, RX_DMA_BUF_SIZE);
+    __HAL_DMA_DISABLE_IT(huart1.hdmarx, DMA_IT_HT);
+  }
+}
 
-    Buffer_Decode();
-    HAL_UART_Receive_DMA(&huart1, buffer, BUFFER_SIZE);
+void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size) {
+  if (huart->Instance == USART1) {
+    ProcessRxBytes(rx_dma_buf, Size);
+    HAL_UARTEx_ReceiveToIdle_DMA(&huart1, rx_dma_buf, RX_DMA_BUF_SIZE);
+    __HAL_DMA_DISABLE_IT(huart1.hdmarx, DMA_IT_HT);
   }
 }
 
@@ -68,19 +173,24 @@ void controller_task(void *argument) {
     if ((osEventFlagsWait(flags_id, 0x00000010U, osFlagsWaitAny, 0) &
          0xFF000010U) == 0x00000010U) {
       joystick_mode =
-          (JOYSTICK_MODE_E)(((int)joystick_mode + 1) % 3); // 三种模式循环切换
+          (JOYSTICK_MODE_E)(((int)joystick_mode + 1) % 4); // 四种模式循环切换
     }
     switch (joystick_mode) {
     case CHASSIS_MODE:
+      chassis_control_mode = VEL_Control;
       chassis_v.vx = __JOYSTICK2VEL__(LY_T);
       chassis_v.vy = __JOYSTICK2VEL__(-1.0f * LX_T);
       chassis_v.wz = __JOYSTICK2WZ__(-1.0f * RX_T);
       break;
     case CLAMP_MODE:
+      chassis_control_mode = VEL_Control;
       chassis_v.vx = 0;
       chassis_v.vy = 0;
       chassis_v.wz = 0;
 
+      break;
+    case AUTO_ALIGN_MODE:
+      ApplyVisionAutoAlign();
       break;
     default:
       break;
@@ -89,6 +199,7 @@ void controller_task(void *argument) {
     osDelay(10);
   }
 }
+
 void Buffer_Decode(void) {
   if (buffer[0] != FRAME_HEADER)
     return;

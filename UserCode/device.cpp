@@ -118,12 +118,13 @@ void APP_Device_Update() {
       &hcan2, motors::DJIMotor::IqSetCMDGroup::IqCMDGroup_5_8);
 }
 
+
 bool APP_Device_isAllConnected() {
   bool all_connected = true;
 
   // check motors
   for (const auto &m : motor_wheel)
-    all_connected &= m->isConnected();
+        all_connected &= m->isConnected();
 
   all_connected &= (motor_drawer_1 != nullptr) && motor_drawer_1->isConnected();
   all_connected &= (motor_drawer_2 != nullptr) && motor_drawer_2->isConnected();
