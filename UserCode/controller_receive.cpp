@@ -343,6 +343,14 @@ static void ApplyInterboardRetreatByPosition(void) {
       chassis_v.wz = 0.0f;
     }
   }
+=======
+  const LR_DataPacket body_pkt = LR_Convert_Packet_CameraToArm(&src);
+
+  target_x = body_pkt.x;
+  target_y = body_pkt.y;
+  target_yaw = body_pkt.yaw;
+  chassis_control_mode = POS_Control;
+>>>>>>> origin/main
 }
 
 static void ProcessRxBytes(const uint8_t *data, uint16_t size) {
@@ -373,6 +381,7 @@ void Controller_receiver_Init(void) {
   osThreadNew(controller_task, NULL, &controller_attributes);
   HAL_UARTEx_ReceiveToIdle_DMA(&huart1, rx_dma_buf, RX_DMA_BUF_SIZE);
   __HAL_DMA_DISABLE_IT(huart1.hdmarx, DMA_IT_HT);
+<<<<<<< HEAD
 
   if (HAL_UART_Receive_IT(&huart2, &lr_uart2_rx_byte, 1) != HAL_OK) {
     vision_uart2_diag_rearm_fail_cnt++;
@@ -381,6 +390,8 @@ void Controller_receiver_Init(void) {
   if (HAL_UART_Receive_IT(&huart4, &interboard_uart4_rx_byte, 1) != HAL_OK) {
     // UART4 版间通信若启动失败，InterboardComm 内部会保持超时保护。
   }
+=======
+>>>>>>> origin/main
 }
 
 uint8_t byte_test = 0;
