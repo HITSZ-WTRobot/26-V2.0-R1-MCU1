@@ -106,3 +106,7 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
     Trajectory::MotorTrajectory
     # Add user defined libraries
 )
+
+target_link_options(${PROJECT_NAME} PRIVATE
+    -u _scanf_float
+)
