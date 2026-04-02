@@ -166,7 +166,9 @@ static void ApplyYawTargetFilter(float raw_yaw, float *yaw)
 static void ApplyButtonStepAlignFallback(void) {
   ResetVisionTargetFilter();
 
-  const uint32_t event = button_status;
+  // 在自动对齐模式下，只处理该模式专属的按键位（bit 1/3/5/7）
+  // 清除其他优先级更高的按键位，避免与主逻辑冲突
+  uint32_t event = button_status & ((1U << 1) | (1U << 3) | (1U << 5) | (1U << 7));
   float step_x = 0.0f;
   float step_y = 0.0f;
   float step_yaw = 0.0f;
@@ -183,27 +185,36 @@ static void ApplyButtonStepAlignFallback(void) {
     return;
   }
 
-  // keypad 1/3/5/7 -> 前/左/右/后，每次按下步进0.05m。
-  // 按键索引与编号关系：button1->bit0, button3->bit2, button5->bit4, button7->bit6.
+  // 仅在有相关按键时才处理
+  if (event == 0) {
+    return;
+  }
+
+  // keypad 2/4/6/8 -> 前/左/右/后，每次按下步进0.15m。
+  // 按键索引与编号关系：button2->bit1, button4->bit3, button6->bit5, button8->bit7.
+  // 多个按键同时按下时支持累加
   if (event & (1U << 1)) {
-    step_x = kAutoAlignStepM;
-    step_yaw = 5.0f; // 同时增加一个小的旋转，帮助打破纯平移可能遇到的局部最优问题。
-  } else if (event & (1U << 3)) {
+    step_x = 1.20;
+  }
+  if (event & (1U << 3)) {
     step_y = kAutoAlignStepM;
-    step_yaw = -5.0f;
-  } else if (event & (1U << 5)) {
-    step_y = -kAutoAlignStepM;
-    step_yaw = 5.0f;
-  } else if (event & (1U << 7)) {
-    step_x = -kAutoAlignStepM;
-    step_yaw = -5.0f;
+    step_yaw += -5.0f;
+  }
+  if (event & (1U << 5)) {
+    step_yaw += 45.0f;
+  }
+  if (event & (1U << 7)) {
+    step_yaw += -45.0f;
   }
 
   target_x = step_x;
   target_y = step_y;
   target_yaw = step_yaw;
-  g_step_cmd_active = (step_x != 0.0f || step_y != 0.0f);
+  g_step_cmd_active = (step_x != 0.0f || step_y != 0.0f || step_yaw != 0.0f);
   chassis_control_mode = POS_Control;
+  
+  // 清除已处理的按键位，防止其他逻辑重复使用
+  button_status &= ~((1U << 1) | (1U << 3) | (1U << 5) | (1U << 7));
 }
 
 static bool ApplyVisionAutoAlign(void) {
@@ -254,6 +265,7 @@ static bool ApplyVisionAutoAlign(void) {
   //直接走向目标点，暂不区分旋转和位移阶段，开环控制，后续可增加分阶段闭环控制
   LR_Compute_Target(cam_x, cam_y, cam_z, cam_yaw, &target_x, &target_y, &target_yaw);
 
+  return true;
 }
 
 static void AbortAutoAlignAndStop(void) {
