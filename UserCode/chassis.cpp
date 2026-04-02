@@ -132,6 +132,7 @@ void Chassis_TIM_Callback() {
   chassis_->profileUpdate(kControlDt);
   chassis_->errorUpdate();
   chassis_->controllerUpdate();
+  omni4->update();
 }
 
 void APP_Chassis_Update_1kHz() { Chassis_TIM_Callback(); }

@@ -1,16 +1,11 @@
 
 #include "controller_receive.hpp"
-<<<<<<< HEAD
 #include "chassis.hpp"
 #include "interboard_comm.hpp"
 #include "vision_lower_receive.hpp"
 #include "watchdog.hpp"
 #include <cmath>
 #include <cstdint>
-=======
-#include "vision_lower_receive.hpp"
-#include "watchdog.hpp"
->>>>>>> origin/main
 #include <string.h>
 
 #define RAWDATA_SIZE 14   // 每一帧大小
@@ -28,7 +23,6 @@ uint8_t buffer[14];
 static uint8_t rx_dma_buf[RX_DMA_BUF_SIZE];
 static uint8_t rx_frame_buf[RAWDATA_SIZE];
 static uint8_t rx_frame_fill = 0;
-<<<<<<< HEAD
 static uint8_t lr_uart2_rx_byte = 0;
 static uint8_t interboard_uart4_rx_byte = 0;
 
@@ -37,8 +31,6 @@ volatile uint32_t vision_uart2_diag_rx_byte_cnt = 0;
 volatile uint32_t vision_uart2_diag_rearm_fail_cnt = 0;
 volatile uint32_t vision_uart2_diag_err_cnt = 0;
 volatile uint32_t vision_uart2_diag_last_err_code = 0;
-=======
->>>>>>> origin/main
 uint32_t decodesuccess_count = 0;             // 成功解码次数
 bool decode_enable = false;                   // 解码使能标志
 bool is_controller_connected = true;          // 遥控器连接状态
@@ -77,7 +69,6 @@ const osThreadAttr_t controller_attributes = {
     .priority = (osPriority_t)osPriorityHigh,
 };
 
-<<<<<<< HEAD
 // 滤波参数和状态
 constexpr float kAutoAlignStepM = 0.15f;
 constexpr float kInterboardRetreatDistanceM = 0.20f;
@@ -181,15 +172,6 @@ static void ApplyButtonStepAlignFallback(void) {
   float step_x = 0.0f;
   float step_y = 0.0f;
   float step_yaw = 0.0f;
-=======
-constexpr float kAutoAlignStepM = 0.15f;
-static bool g_step_cmd_active = false;
-
-static void ApplyButtonStepAlignFallback(void) {
-  const uint32_t event = button_status;
-  float step_x = 0.0f;
-  float step_y = 0.0f;
->>>>>>> origin/main
 
   // Keep current step target until chassis reports trajectory finished.
   if (g_step_cmd_active) {
@@ -219,7 +201,7 @@ static void ApplyButtonStepAlignFallback(void) {
     step_yaw += -5.0f;
   }
   if (event & (1U << 5)) {
-    step_yaw += 45.0f;
+    step_yaw += 30.0f;
   }
   if (event & (1U << 7)) {
     step_yaw += -45.0f;
@@ -276,7 +258,6 @@ static bool ApplyVisionAutoAlign(void) {
     src = lr_detect_buffer[latest_idx];
   }
 
-<<<<<<< HEAD
   float cam_x = src.x;
   float cam_y = src.y;
   float cam_z = src.z;
@@ -362,14 +343,6 @@ static void ApplyInterboardRetreatByPosition(void) {
       chassis_v.wz = 0.0f;
     }
   }
-=======
-  const LR_DataPacket body_pkt = LR_Convert_Packet_CameraToArm(&src);
-
-  target_x = body_pkt.x;
-  target_y = body_pkt.y;
-  target_yaw = body_pkt.yaw;
-  chassis_control_mode = POS_Control;
->>>>>>> origin/main
 }
 
 static void ProcessRxBytes(const uint8_t *data, uint16_t size) {
@@ -400,7 +373,6 @@ void Controller_receiver_Init(void) {
   osThreadNew(controller_task, NULL, &controller_attributes);
   HAL_UARTEx_ReceiveToIdle_DMA(&huart1, rx_dma_buf, RX_DMA_BUF_SIZE);
   __HAL_DMA_DISABLE_IT(huart1.hdmarx, DMA_IT_HT);
-<<<<<<< HEAD
 
   if (HAL_UART_Receive_IT(&huart2, &lr_uart2_rx_byte, 1) != HAL_OK) {
     vision_uart2_diag_rearm_fail_cnt++;
@@ -409,8 +381,6 @@ void Controller_receiver_Init(void) {
   if (HAL_UART_Receive_IT(&huart4, &interboard_uart4_rx_byte, 1) != HAL_OK) {
     // UART4 版间通信若启动失败，InterboardComm 内部会保持超时保护。
   }
-=======
->>>>>>> origin/main
 }
 
 uint8_t byte_test = 0;
