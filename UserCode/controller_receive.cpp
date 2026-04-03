@@ -81,6 +81,7 @@ constexpr float kVisionYawLpfAlpha = 0.60f;
 constexpr float kVisionYawDeadbandDeg = 0.8f;
 constexpr float kAutoAlignYawLockDeg = 2.0f;
 constexpr uint32_t kVisionLostCycleThreshold = 10U; // controller_task 10ms周期，约100ms
+constexpr uint32_t kAutoAlignAverageFrameCount = 20U;
 static bool g_step_cmd_active = false;
 static bool g_interboard_retreat_active = false;
 static bool g_interboard_retreat_last_req = false;
@@ -92,6 +93,12 @@ static float g_target_y_filtered = 0.0f;
 static uint32_t g_vision_last_update_seq = 0U;
 static uint32_t g_vision_stale_cycles = 0U;
 static bool g_auto_align_translation_phase = false;
+static bool g_auto_align_pos_executed_once = false;
+static uint32_t g_auto_align_sample_count = 0U;
+static uint32_t g_auto_align_last_sample_seq = 0U;
+static float g_auto_align_sum_x = 0.0f;
+static float g_auto_align_sum_y = 0.0f;
+static float g_auto_align_sum_yaw = 0.0f;
 
 static inline float ClampFloat(float value, float min_value, float max_value) {
   return value < min_value ? min_value : (value > max_value ? max_value : value);
@@ -110,6 +117,15 @@ static void ResetVisionSignalState(void) {
 
 static void ResetAutoAlignPhaseState(void) {
   g_auto_align_translation_phase = false;
+}
+
+static void ResetAutoAlignOneShotState(void) {
+  g_auto_align_pos_executed_once = false;
+  g_auto_align_sample_count = 0U;
+  g_auto_align_last_sample_seq = 0U;
+  g_auto_align_sum_x = 0.0f;
+  g_auto_align_sum_y = 0.0f;
+  g_auto_align_sum_yaw = 0.0f;
 }
 
 static void ApplyVisionTargetFilter(float raw_x, float raw_y, float *out_x, float *out_y) {
@@ -222,6 +238,10 @@ static bool ApplyVisionAutoAlign(void) {
   chassis_v.vy = 0.0f;
   chassis_v.wz = 0.0f;
 
+  if (g_auto_align_pos_executed_once) {
+    return true;
+  }
+
   const uint32_t apriltag_seq = lr_apriltag_update_seq;
   const uint32_t detect_seq = lr_detect_update_seq;
   const uint32_t latest_seq = (apriltag_seq >= detect_seq) ? apriltag_seq : detect_seq;
@@ -249,6 +269,11 @@ static bool ApplyVisionAutoAlign(void) {
   auto_mode = use_apriltag ? 2 : 1; // 2=apriltag, 1=detect
   g_step_cmd_active = false;
 
+  if (latest_seq == g_auto_align_last_sample_seq) {
+    return true;
+  }
+  g_auto_align_last_sample_seq = latest_seq;
+
   LR_DataPacket src = {0};
   if (use_apriltag) {
     const int latest_idx = (lr_apriltag_write_idx + LR_DATA_MAX_NUM - 1) % LR_DATA_MAX_NUM;
@@ -257,13 +282,28 @@ static bool ApplyVisionAutoAlign(void) {
     const int latest_idx = (lr_detect_write_idx + LR_DATA_MAX_NUM - 1) % LR_DATA_MAX_NUM;
     src = lr_detect_buffer[latest_idx];
   }
+  
+  float sample_target_x = 0.0f;
+  float sample_target_y = 0.0f;
+  float sample_target_yaw = 0.0f;
+  LR_Compute_Target(src.x, src.y, src.z, src.yaw,
+                    &sample_target_x, &sample_target_y, &sample_target_yaw);
 
-  float cam_x = src.x;
-  float cam_y = src.y;
-  float cam_z = src.z;
-  float cam_yaw = src.yaw;
-  //直接走向目标点，暂不区分旋转和位移阶段，开环控制，后续可增加分阶段闭环控制
-  LR_Compute_Target(cam_x, cam_y, cam_z, cam_yaw, &target_x, &target_y, &target_yaw);
+  g_auto_align_sum_x += sample_target_x;
+  g_auto_align_sum_y += sample_target_y;
+  g_auto_align_sum_yaw += sample_target_yaw;
+  g_auto_align_sample_count++;
+
+  if (g_auto_align_sample_count < kAutoAlignAverageFrameCount) {
+    return true;
+  }
+
+  const float inv_count = 1.0f / (float)g_auto_align_sample_count;
+  target_x = g_auto_align_sum_x * inv_count;
+  target_y = g_auto_align_sum_y * inv_count;
+  target_yaw = g_auto_align_sum_yaw * inv_count;
+  chassis_control_mode = POS_Control;
+  g_auto_align_pos_executed_once = true;
 
   return true;
 }
@@ -443,12 +483,19 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size) {
 }
 
 void controller_task(void *argument) {
+  JOYSTICK_MODE_E last_joystick_mode = joystick_mode;
+
   for (;;) {
     if ((osEventFlagsWait(flags_id, 0x00000010U, osFlagsWaitAny, 0) &
          0xFF000010U) == 0x00000010U) {
       joystick_mode =
           (JOYSTICK_MODE_E)(((int)joystick_mode + 1) % 4); // 四种模式循环切换
     }
+
+    if (last_joystick_mode != AUTO_ALIGN_MODE && joystick_mode == AUTO_ALIGN_MODE) {
+      ResetAutoAlignOneShotState();
+    }
+
     switch (joystick_mode) {
     case CHASSIS_MODE:
       ResetVisionTargetFilter();
@@ -498,14 +545,14 @@ void controller_task(void *argument) {
         ApplyInterboardRetreatByPosition();
       } 
       else {
-        if (!ApplyVisionAutoAlign()) {
-          ApplyButtonStepAlignFallback();
-        }
+        ApplyVisionAutoAlign();
       }
       break;
     default:
       break;
     }
+
+    last_joystick_mode = joystick_mode;
 
     osDelay(10);
   }

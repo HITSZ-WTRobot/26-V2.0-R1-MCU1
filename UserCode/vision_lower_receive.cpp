@@ -67,8 +67,8 @@ static int LR_Parse_Floats(const char* text, float* out, int max_count)
 
 // ======================== 内部变量 ========================
 static LR_DataTypeCallback g_datatype_cb = NULL;
-static LR_Vector3          g_camera_to_body_offset = { 0.48f, 0.0f, 0.0f };// 视觉坐标系（相机）到机器人身体坐标系的偏移 单位米x方向前正，y方向左正，z方向上正
-static LR_Vector3          g_arm_to_body_offset    = { 1.38f, 0.0f, 0.0f };// 视觉坐标系（相机）到机器人身体坐标系的偏移 单位米x方向前正，y方向左正，z方向上正
+static LR_Vector3          g_camera_to_body_offset = { 0.40f, 0.0f, 0.0f };// 视觉坐标系（相机）到机器人身体坐标系的偏移 单位米x方向前正，y方向左正，z方向上正
+static LR_Vector3          g_arm_to_body_offset    = { 0.83f, 0.35f, 0.0f };// 视觉坐标系（相机）到机器人身体坐标系的偏移 单位米x方向前正，y方向左正，z方向上正
 static int yaw_camera_to_body_deg = 0; // 视觉坐标系（相机）到机器人身体坐标系的偏移 角度（单位度，正值表示相机坐标系相对于身体坐标系逆时针旋转）
 static int yaw_arm_to_body_deg    = 0; // 机械臂坐标系到机器人身体坐标系的偏移 角度（单位度，正值表示机械臂坐标系相对于身体坐标系逆时针旋转）
 constexpr float PI = 3.14159265358979323846f;
@@ -120,24 +120,22 @@ void LR_Compute_Target(float x, float y, float z, float yaw,
     float camera_yaw = 0.0f;
 
     //位置受到坐标轴颠倒和摄像头于机械臂位置关系的影响
+    camera_x = x;
     camera_y = LR_CAMERA_REVERSED ? -y : y;
     camera_yaw = LR_CAMERA_REVERSED ? -yaw : yaw;
 
-    
-    //body坐标计算
-    float body_x = 0.0f;
-    body_x = (camera_x + g_camera_to_body_offset.x) * cosf(yaw*PI/180.0f) + (camera_y + g_camera_to_body_offset.y) * sinf(yaw*PI/180.0f);
-    float body_y = 0.0f;
-    body_y = -(camera_x + g_camera_to_body_offset.x) * sinf(yaw*PI/180.0f) + (camera_y + g_camera_to_body_offset.y) * cosf(yaw*PI/180.0f);
-    
-    //arm坐标计算
-    if (target_x)
-        *target_x = body_x - g_arm_to_body_offset.x;
-    if (target_y)
-        *target_y = body_y - g_arm_to_body_offset.y;
+    //先换算相机到车体坐标系
+    float body_x = camera_x + g_camera_to_body_offset.x;
+    float body_y = camera_y + g_camera_to_body_offset.y;
 
-    if (target_yaw)
-        *target_yaw = camera_yaw + yaw_camera_to_body_deg - yaw_arm_to_body_deg;
+    float target_in_body_x = body_x - g_arm_to_body_offset.x * cosf(PI * camera_yaw / 180.0f) 
+    + g_arm_to_body_offset.y * sinf(PI * camera_yaw / 180.0f);
+    float target_in_body_y = body_y - g_arm_to_body_offset.x * sinf(PI * camera_yaw / 180.0f)
+    - g_arm_to_body_offset.y * cosf(PI * camera_yaw / 180.0f);
+
+    *target_x = target_in_body_x;
+    *target_y = target_in_body_y;
+    *target_yaw = camera_yaw;
 
 }
 
