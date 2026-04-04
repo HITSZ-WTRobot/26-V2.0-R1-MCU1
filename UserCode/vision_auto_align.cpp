@@ -138,7 +138,7 @@ static bool TryApplyInterboardTarget(float *target_x,
 
   *target_x = (float)x_mm * kMmToMScale;
   *target_y = (float)y_mm * kMmToMScale;
-  *target_yaw = (float)yaw_mm * kMmToMScale;
+  *target_yaw = (float)yaw_mm;
   *chassis_control_mode = POS_Control;
   return true;
 }
