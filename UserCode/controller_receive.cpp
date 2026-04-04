@@ -69,7 +69,7 @@ const osThreadAttr_t controller_attributes = {
     .priority = (osPriority_t)osPriorityHigh,
 };
 
-// 滤波参数和状态
+
 static void ProcessRxBytes(const uint8_t *data, uint16_t size) {
   for (uint16_t i = 0; i < size; ++i) {
     const uint8_t byte = data[i];
@@ -108,7 +108,6 @@ void Controller_receiver_Init(void) {
   }
 }
 
-uint8_t byte_test = 0;
 
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
   if (huart->Instance == USART1) {

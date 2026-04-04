@@ -2,11 +2,19 @@
 
 #include "interboard_comm.hpp"
 #include "vision_lower_receive.hpp"
+#include <cmath>
 
 constexpr uint32_t kVisionLostCycleThreshold = 10U; // controller_task 10ms周期，约100ms
 constexpr uint32_t kAutoAlignAverageFrameCount = 20U;
 constexpr float kInterboardRetreatDistanceM = 0.20f;
 constexpr float kMmToMScale = 0.001f;
+constexpr float kVisionLpfAlpha = 0.85f;
+constexpr float kVisionMaxStepPerCycleM = 0.03f;
+constexpr float kVisionMaxStepPerCycleDeg = 12.0f;
+constexpr float kVisionPosDeadbandM = 0.03f;
+constexpr float kVisionYawLpfAlpha = 0.60f;
+constexpr float kVisionYawDeadbandDeg = 0.8f;
+constexpr float kAutoAlignYawLockDeg = 2.0f;
 
 static uint32_t g_vision_last_update_seq = 0U;
 static uint32_t g_vision_stale_cycles = 0U;
@@ -21,6 +29,62 @@ static bool g_interboard_retreat_active = false;
 static bool g_interboard_retreat_last_req = false;
 static bool g_emergency_hold_active = false;
 static bool g_wait_interboard_target = false;
+static bool g_vision_filter_inited = false;
+static float g_target_x_filtered = 0.0f;
+static float g_target_y_filtered = 0.0f;
+
+static inline float ClampFloat(float value, float min_value, float max_value) {
+  return value < min_value ? min_value : (value > max_value ? max_value : value);
+}
+
+static void ApplyVisionTargetFilter(float raw_x, float raw_y, float *out_x, float *out_y) {
+  if (!out_x || !out_y) {
+    return;
+  }
+
+  if (!g_vision_filter_inited) {
+    g_target_x_filtered = raw_x;
+    g_target_y_filtered = raw_y;
+    g_vision_filter_inited = true;
+  }
+
+  const float dx = ClampFloat(raw_x - g_target_x_filtered,
+                              -kVisionMaxStepPerCycleM,
+                              kVisionMaxStepPerCycleM);
+  const float dy = ClampFloat(raw_y - g_target_y_filtered,
+                              -kVisionMaxStepPerCycleM,
+                              kVisionMaxStepPerCycleM);
+
+  g_target_x_filtered += kVisionLpfAlpha * dx;
+  g_target_y_filtered += kVisionLpfAlpha * dy;
+
+  if (fabsf(g_target_x_filtered) < kVisionPosDeadbandM) {
+    g_target_x_filtered = 0.0f;
+  }
+  if (fabsf(g_target_y_filtered) < kVisionPosDeadbandM) {
+    g_target_y_filtered = 0.0f;
+  }
+
+  *out_x = g_target_x_filtered;
+  *out_y = g_target_y_filtered;
+}
+
+static void ApplyYawTargetFilter(float raw_yaw, float *yaw) {
+  if (!yaw) {
+    return;
+  }
+
+  const float dyaw = ClampFloat(raw_yaw - *yaw,
+                              -kVisionMaxStepPerCycleDeg,
+                              kVisionMaxStepPerCycleDeg);
+  float yaw_output = *yaw + kVisionYawLpfAlpha * dyaw;
+
+  if (fabsf(yaw_output) < kVisionYawDeadbandDeg) {
+    yaw_output = 0.0f;
+  }
+
+  *yaw = yaw_output;
+}
 
 static bool ArmActionKeyTriggered(uint32_t button_status) {
   return ((button_status & (1U << 0)) != 0U) ||
@@ -131,6 +195,9 @@ void VisionAutoAlign_ResetState(void) {
   g_interboard_retreat_last_req = false;
   g_emergency_hold_active = false;
   g_wait_interboard_target = false;
+  g_vision_filter_inited = false;
+  g_target_x_filtered = 0.0f;
+  g_target_y_filtered = 0.0f;
 }
 
 void VisionAutoAlign_OnModeEnter(void) {
@@ -203,6 +270,9 @@ static bool VisionAutoAlign_Apply(float *target_x,
   float sample_target_yaw = 0.0f;
   LR_Compute_Target(src.x, src.y, src.z, src.yaw,
                     &sample_target_x, &sample_target_y, &sample_target_yaw);
+
+  ApplyVisionTargetFilter(sample_target_x, sample_target_y, &sample_target_x, &sample_target_y);
+  ApplyYawTargetFilter(sample_target_yaw, &sample_target_yaw);
 
   g_auto_align_sum_x += sample_target_x;
   g_auto_align_sum_y += sample_target_y;
