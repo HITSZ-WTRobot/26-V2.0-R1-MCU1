@@ -54,6 +54,12 @@ float x = 0.0f,
 
 uint8_t auto_mode = 0; // 自动模式选择，0=没有视觉信息模式，1=自动对齐
 
+float x = 0.0f,
+      y = 0.0f,
+      yaw = 0.0f; // 来自视觉的目标位置和朝向数据（单位米/度）
+
+uint8_t auto_mode = 0; // 自动模式选择，0=没有视觉信息模式，1=自动对齐
+
 bool joystick_button_L; // 左摇杆按键状态
 bool joystick_button_R; // 右摇杆按键状态
 
@@ -114,6 +120,47 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
     ProcessRxBytes(rx_dma_buf, RX_DMA_BUF_SIZE);
     HAL_UARTEx_ReceiveToIdle_DMA(&huart1, rx_dma_buf, RX_DMA_BUF_SIZE);
     __HAL_DMA_DISABLE_IT(huart1.hdmarx, DMA_IT_HT);
+  } else if (huart->Instance == USART2) {
+    const uint8_t rx_byte = lr_uart2_rx_byte;
+    vision_uart2_diag_rx_irq_cnt++;
+    vision_uart2_diag_rx_byte_cnt++;
+    // 先重启接收，尽量缩短无保护窗口，避免连续字节导致ORE。
+    if (HAL_UART_Receive_IT(&huart2, &lr_uart2_rx_byte, 1) != HAL_OK) {
+      vision_uart2_diag_rearm_fail_cnt++;
+      return;
+    }
+    LR_Parse_And_Store(rx_byte);
+  } else if (huart->Instance == UART4) {
+    const uint8_t rx_byte = interboard_uart4_rx_byte;
+    if (HAL_UART_Receive_IT(&huart4, &interboard_uart4_rx_byte, 1) != HAL_OK) {
+      return;
+    }
+    InterboardComm_OnUartByte(rx_byte);
+  }
+}
+
+void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart) {
+  if (huart->Instance == USART2) {
+    vision_uart2_diag_err_cnt++;
+    vision_uart2_diag_last_err_code = huart->ErrorCode;
+
+    // 清除常见UART错误标志，避免错误中断反复触发导致接收回调停滞。
+    __HAL_UART_CLEAR_PEFLAG(huart);
+    __HAL_UART_CLEAR_FEFLAG(huart);
+    __HAL_UART_CLEAR_NEFLAG(huart);
+    __HAL_UART_CLEAR_OREFLAG(huart);
+
+    if (HAL_UART_Receive_IT(&huart2, &lr_uart2_rx_byte, 1) != HAL_OK) {
+      vision_uart2_diag_rearm_fail_cnt++;
+
+    }
+  } else if (huart->Instance == UART4) {
+    __HAL_UART_CLEAR_PEFLAG(huart);
+    __HAL_UART_CLEAR_FEFLAG(huart);
+    __HAL_UART_CLEAR_NEFLAG(huart);
+    __HAL_UART_CLEAR_OREFLAG(huart);
+
+    (void)HAL_UART_Receive_IT(&huart4, &interboard_uart4_rx_byte, 1);
   } else if (huart->Instance == USART2) {
     const uint8_t rx_byte = lr_uart2_rx_byte;
     vision_uart2_diag_rx_irq_cnt++;
@@ -251,6 +298,12 @@ void Buffer_Decode(void) {
       button_status |= (1 << i);
     }
   }
+  uint32_t publish_flags = button_status;
+  if (joystick_mode == AUTO_ALIGN_MODE) {
+    // 自动对齐模式下仅保留模式切换键事件，避免其他任务消费同一按键位产生冲突。
+    publish_flags &= (1U << 4);
+  }
+  bbb = osEventFlagsSet(flags_id, publish_flags);
   uint32_t publish_flags = button_status;
   if (joystick_mode == AUTO_ALIGN_MODE) {
     // 自动对齐模式下仅保留模式切换键事件，避免其他任务消费同一按键位产生冲突。
