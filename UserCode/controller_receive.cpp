@@ -1,9 +1,7 @@
-
 #include "controller_receive.hpp"
 #include "chassis.hpp"
 #include "interboard_comm.hpp"
 #include "vision_auto_align.hpp"
-#include "vision_lower_receive.hpp"
 #include "watchdog.hpp"
 #include <cstdint>
 #include <string.h>
@@ -15,26 +13,17 @@
 #define FRAME_TAIL      0xBB // 帧尾
 #define BUTTON_NUM      9    // 按钮个数
 
-uint32_t bbb = 0;
-// 测试用计数器
-
 uint32_t       decode_count = 0;
 uint8_t        buffer[14];
 static uint8_t rx_dma_buf[RX_DMA_BUF_SIZE];
 static uint8_t rx_frame_buf[RAWDATA_SIZE];
-static uint8_t rx_frame_fill            = 0;
-static uint8_t lr_uart2_rx_byte         = 0;
-static uint8_t interboard_uart4_rx_byte = 0;
 
-volatile uint32_t vision_uart2_diag_rx_irq_cnt     = 0;
-volatile uint32_t vision_uart2_diag_rx_byte_cnt    = 0;
-volatile uint32_t vision_uart2_diag_rearm_fail_cnt = 0;
-volatile uint32_t vision_uart2_diag_err_cnt        = 0;
-volatile uint32_t vision_uart2_diag_last_err_code  = 0;
-uint32_t          decodesuccess_count              = 0;            // 成功解码次数
-bool              decode_enable                    = false;        // 解码使能标志
-bool              is_controller_connected          = true;         // 遥控器连接状态
-JOYSTICK_MODE_E   joystick_mode                    = CHASSIS_MODE; // 遥控器模式，默认底盘模式
+static uint8_t  rx_frame_fill            = 0;
+static uint8_t  interboard_uart4_rx_byte = 0;
+uint32_t        decodesuccess_count      = 0;            // 成功解码次数
+bool            decode_enable            = false;        // 解码使能标志
+bool            is_controller_connected  = true;         // 遥控器连接状态
+JOYSTICK_MODE_E joystick_mode            = CHASSIS_MODE; // 遥控器模式，默认底盘模式
 
 static service::Watchdog controller_watchdog;
 
@@ -103,68 +92,44 @@ void Controller_receiver_Init(void)
     HAL_UARTEx_ReceiveToIdle_DMA(&huart1, rx_dma_buf, RX_DMA_BUF_SIZE);
     __HAL_DMA_DISABLE_IT(huart1.hdmarx, DMA_IT_HT);
 
-    if (HAL_UART_Receive_IT(&huart2, &lr_uart2_rx_byte, 1) != HAL_OK)
-    {
-        vision_uart2_diag_rearm_fail_cnt++;
-    }
-
     if (HAL_UART_Receive_IT(&huart4, &interboard_uart4_rx_byte, 1) != HAL_OK)
     {
         // UART4 版间通信若启动失败，InterboardComm 内部会保持超时保护。
     }
 }
 
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef* huart)
+void Controller_Receive_Callback(void)
+{
+    ProcessRxBytes(rx_dma_buf, RX_DMA_BUF_SIZE);
+    HAL_UARTEx_ReceiveToIdle_DMA(&huart1, rx_dma_buf, RX_DMA_BUF_SIZE);
+    __HAL_DMA_DISABLE_IT(huart1.hdmarx, DMA_IT_HT);
+}
+
+bool ControllerReceive_OnRxCplt(UART_HandleTypeDef* huart)
 {
     if (huart->Instance == USART1)
     {
-        ProcessRxBytes(rx_dma_buf, RX_DMA_BUF_SIZE);
-        HAL_UARTEx_ReceiveToIdle_DMA(&huart1, rx_dma_buf, RX_DMA_BUF_SIZE);
-        __HAL_DMA_DISABLE_IT(huart1.hdmarx, DMA_IT_HT);
+        Controller_Receive_Callback();
+        return true;
     }
-    else if (huart->Instance == USART2)
-    {
-        const uint8_t rx_byte = lr_uart2_rx_byte;
-        vision_uart2_diag_rx_irq_cnt++;
-        vision_uart2_diag_rx_byte_cnt++;
-        // 先重启接收，尽量缩短无保护窗口，避免连续字节导致ORE。
-        if (HAL_UART_Receive_IT(&huart2, &lr_uart2_rx_byte, 1) != HAL_OK)
-        {
-            vision_uart2_diag_rearm_fail_cnt++;
-            return;
-        }
-        LR_Parse_And_Store(rx_byte);
-    }
-    else if (huart->Instance == UART4)
+
+    if (huart->Instance == UART4)
     {
         const uint8_t rx_byte = interboard_uart4_rx_byte;
         if (HAL_UART_Receive_IT(&huart4, &interboard_uart4_rx_byte, 1) != HAL_OK)
         {
-            return;
+            return true;
         }
         InterboardComm_OnUartByte(rx_byte);
+        return true;
     }
+
+    return false;
 }
 
-void HAL_UART_ErrorCallback(UART_HandleTypeDef* huart)
+bool ControllerReceive_OnError(UART_HandleTypeDef* huart)
 {
-    if (huart->Instance == USART2)
-    {
-        vision_uart2_diag_err_cnt++;
-        vision_uart2_diag_last_err_code = huart->ErrorCode;
-
-        // 清除常见UART错误标志，避免错误中断反复触发导致接收回调停滞。
-        __HAL_UART_CLEAR_PEFLAG(huart);
-        __HAL_UART_CLEAR_FEFLAG(huart);
-        __HAL_UART_CLEAR_NEFLAG(huart);
-        __HAL_UART_CLEAR_OREFLAG(huart);
-
-        if (HAL_UART_Receive_IT(&huart2, &lr_uart2_rx_byte, 1) != HAL_OK)
-        {
-            vision_uart2_diag_rearm_fail_cnt++;
-        }
-    }
-    else if (huart->Instance == UART4)
+    if (huart->Instance == UART4)
     {
         __HAL_UART_CLEAR_PEFLAG(huart);
         __HAL_UART_CLEAR_FEFLAG(huart);
@@ -172,17 +137,23 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef* huart)
         __HAL_UART_CLEAR_OREFLAG(huart);
 
         (void)HAL_UART_Receive_IT(&huart4, &interboard_uart4_rx_byte, 1);
+        return true;
     }
+
+    return false;
 }
 
-void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef* huart, uint16_t Size)
+bool ControllerReceive_OnRxEvent(UART_HandleTypeDef* huart, uint16_t Size)
 {
     if (huart->Instance == USART1)
     {
         ProcessRxBytes(rx_dma_buf, Size);
         HAL_UARTEx_ReceiveToIdle_DMA(&huart1, rx_dma_buf, RX_DMA_BUF_SIZE);
         __HAL_DMA_DISABLE_IT(huart1.hdmarx, DMA_IT_HT);
+        return true;
     }
+
+    return false;
 }
 
 void controller_task(void* argument)
@@ -284,8 +255,7 @@ void Buffer_Decode(void)
         // 自动对齐模式下仅保留模式切换键事件，避免其他任务消费同一按键位产生冲突。
         publish_flags &= (1U << 4);
     }
-    bbb  = osEventFlagsSet(flags_id, publish_flags);
-    bbb  = osEventFlagsSet(flags_id, publish_flags);
+    osEventFlagsSet(flags_id, publish_flags);
     LX_T = (int16_t)LX;
     LY_T = (int16_t)LY;
     RX_T = (int16_t)RX;

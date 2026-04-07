@@ -32,7 +32,7 @@ extern "C"
 #define LR_RX_BUFFER_SIZE 128
 // 可缓存的数据包最大数量（环形缓冲区大小）
 #define LR_DATA_MAX_NUM 10
-//摄像头倒立正立，0=正立，1=倒立（影响坐标转换）
+// 摄像头倒立正立，0=正立，1=倒立（影响坐标转换）
 #define LR_CAMERA_REVERSED 1
 
 // ======================== 数据结构 ========================
@@ -77,12 +77,28 @@ extern volatile float    lr_diag_last_x;
 extern volatile float    lr_diag_last_y;
 extern volatile float    lr_diag_last_z;
 extern volatile float    lr_diag_last_yaw;
-extern volatile uint8_t  lr_diag_last_type; // 0=detect, 1=apriltag
+extern volatile uint8_t  lr_diag_last_type;       // 0=detect, 1=apriltag
 extern volatile uint8_t  lr_diag_last_fail_stage; // 1=head/tail, 2=len, 3=number-parse
 extern volatile uint32_t lr_diag_last_raw_len;
 extern volatile char     lr_diag_last_raw_frame[LR_RX_BUFFER_SIZE];
 
 // ======================== 接口函数 ========================
+
+#include "usart.h"
+#include <stdbool.h>
+#include <stdint.h>
+
+// USART2视觉串口最小诊断计数器（可在调试器Watch窗口直接观察）
+extern volatile uint32_t vision_rx_irq_cnt;
+extern volatile uint32_t vision_rx_byte_cnt;
+extern volatile uint32_t vision_fail_cnt;
+extern volatile uint32_t vision_err_cnt;
+extern volatile uint32_t vision_last_err_code;
+
+void CammeraReceive_Init(void);
+bool CammeraReceive_OnRxCplt(UART_HandleTypeDef* huart);
+bool CammeraReceive_OnError(UART_HandleTypeDef* huart);
+
 /**
  * @brief 串口接收中断中调用，逐字节缓存，遇到'\n'或,BB自动解析一帧
  * @param byte 新接收到的字节
@@ -127,14 +143,14 @@ LR_Vector3 LR_Get_Arm_To_Body_Offset(void);
 /**
  * @brief 将相机坐标系下点转换为车体坐标系下点
  */
-void LR_Convert_CameraPoint_To_Body(float cam_x, float cam_y, float cam_z,
-                                    float* body_x, float* body_y, float* body_z);
+void LR_Convert_CameraPoint_To_Body(
+        float cam_x, float cam_y, float cam_z, float* body_x, float* body_y, float* body_z);
 
 /**
  * @brief 将相机坐标系下点转换为机械臂坐标系下点
  */
-void LR_Convert_CameraPoint_To_Arm(float cam_x, float cam_y, float cam_z,
-                                   float* arm_x, float* arm_y, float* arm_z);
+void LR_Convert_CameraPoint_To_Arm(
+        float cam_x, float cam_y, float cam_z, float* arm_x, float* arm_y, float* arm_z);
 
 /**
  * @brief 将相机坐标系下的yaw角转换为车体坐标系下的yaw角
@@ -150,9 +166,8 @@ void LR_Convert_Camerayaw_To_Arm(float cam_yaw_deg, float* arm_yaw_deg);
  @brief 解算位置后的目标位置
  */
 
-void LR_Compute_Target(float x, float y, float z, float yaw,
-                       float* target_x, float* target_y, float* target_yaw);
-
+void LR_Compute_Target(
+        float x, float y, float z, float yaw, float* target_x, float* target_y, float* target_yaw);
 
 /**
  * @brief 将数据包中的位置从相机基准转换为车体基准（姿态字段保持不变）
@@ -163,6 +178,8 @@ LR_DataPacket LR_Convert_Packet_CameraToBody(const LR_DataPacket* cam_pkt);
  * @brief 将数据包中的位置从相机基准转换为机械臂基准（姿态字段保持不变）
  */
 LR_DataPacket LR_Convert_Packet_CameraToArm(const LR_DataPacket* cam_pkt);
+
+void CammeraReceive_Init(void);
 
 #ifdef __cplusplus
 }

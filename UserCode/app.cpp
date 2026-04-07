@@ -7,14 +7,16 @@
 #include "eventflags.hpp"
 #include "interboard_comm.hpp"
 #include "tim.h"
+#include "vision_receive.hpp"
 
-Drawer* drawer = nullptr;
+Drawer*            drawer           = nullptr;
 static osTimerId_t drawer_timHandle = nullptr;
 
 extern "C" void Drawer_softTIM(void* argument)
 {
     (void)argument;
-    if (drawer) drawer->softTIM();
+    if (drawer)
+        drawer->softTIM();
 }
 
 void TIM_Callback_1kHz_1(TIM_HandleTypeDef* htim)
@@ -24,7 +26,8 @@ void TIM_Callback_1kHz_1(TIM_HandleTypeDef* htim)
     static uint32_t tick_1kHz = 0;
     ++tick_1kHz;
 
-    if (drawer) drawer->update_1kHz();
+    if (drawer)
+        drawer->update_1kHz();
     APP_Chassis_Update_1kHz();
 
     APP_Device_Update();
@@ -36,6 +39,11 @@ void APP_Drawer_BeforeUpdate()
     drawer = new Drawer();
 }
 
+extern "C" void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef* huart, uint16_t size)
+{
+    (void)ControllerReceive_OnRxEvent(huart, size);
+}
+
 extern "C" void Init(void* argument)
 {
     (void)argument;
@@ -44,6 +52,7 @@ extern "C" void Init(void* argument)
     APP_Device_Init();
     InterboardComm_Init();
     Controller_receiver_Init();
+    CammeraReceive_Init();
 
     APP_Chassis_BeforeUpdate();
     APP_Drawer_BeforeUpdate();
@@ -60,11 +69,9 @@ extern "C" void Init(void* argument)
     HAL_TIM_RegisterCallback(&htim10, HAL_TIM_PERIOD_ELAPSED_CB_ID, TIM10_Callback);
     HAL_TIM_Base_Start_IT(&htim10);
 
-    //APP_Device_WaitConnections();
+    // APP_Device_WaitConnections();
     osDelay(2000);
 
     APP_Chassis_Init();
-
-    osDelay(1000);
     osThreadExit();
 }

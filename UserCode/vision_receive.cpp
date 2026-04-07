@@ -14,16 +14,73 @@
  * 3. 通过全局缓存访问解析后的数据。
  */
 
-#include "vision_lower_receive.hpp"
 #include <cmath>
 #include <string.h>
 #include <stdio.h>
 #include <ctype.h>
+#include "vision_receive.hpp"
+
+static uint8_t g_lr_uart2_rx_byte = 0;
+
+volatile uint32_t vision_rx_irq_cnt    = 0;
+volatile uint32_t vision_rx_byte_cnt   = 0;
+volatile uint32_t vision_fail_cnt      = 0;
+volatile uint32_t vision_err_cnt       = 0;
+volatile uint32_t vision_last_err_code = 0;
+
+void CammeraReceive_Init(void)
+{
+    if (HAL_UART_Receive_IT(&huart2, &g_lr_uart2_rx_byte, 1) != HAL_OK)
+    {
+        vision_fail_cnt++;
+    }
+}
+
+bool CammeraReceive_OnRxCplt(UART_HandleTypeDef* huart)
+{
+    const uint8_t rx_byte = g_lr_uart2_rx_byte;
+    vision_rx_irq_cnt++;
+    vision_rx_byte_cnt++;
+
+    // 先重启接收，尽量缩短无保护窗口，避免连续字节导致ORE。
+    if (HAL_UART_Receive_IT(&huart2, &g_lr_uart2_rx_byte, 1) != HAL_OK)
+    {
+        vision_fail_cnt++;
+        return true;
+    }
+
+    LR_Parse_And_Store(rx_byte);
+    return true;
+}
+
+bool CammeraReceive_OnError(UART_HandleTypeDef* huart)
+{
+    if (huart->Instance != USART2)
+    {
+        return false;
+    }
+
+    vision_err_cnt++;
+    vision_last_err_code = huart->ErrorCode;
+
+    // 清除常见UART错误标志，避免错误中断反复触发导致接收回调停滞。
+    __HAL_UART_CLEAR_PEFLAG(huart);
+    __HAL_UART_CLEAR_FEFLAG(huart);
+    __HAL_UART_CLEAR_NEFLAG(huart);
+    __HAL_UART_CLEAR_OREFLAG(huart);
+
+    if (HAL_UART_Receive_IT(&huart2, &g_lr_uart2_rx_byte, 1) != HAL_OK)
+    {
+        vision_fail_cnt++;
+    }
+
+    return true;
+}
 
 static int LR_Parse_Floats(const char* text, float* out, int max_count)
 {
-    int count = 0;
-    const char* p = text;
+    int         count = 0;
+    const char* p     = text;
 
     while (*p != '\0' && count < max_count)
     {
@@ -34,13 +91,13 @@ static int LR_Parse_Floats(const char* text, float* out, int max_count)
         }
 
         char* endptr = NULL;
-        float v = strtof(p, &endptr);
+        float v      = strtof(p, &endptr);
         if (endptr == p)
         {
             break;
         }
         out[count++] = v;
-        p = endptr;
+        p            = endptr;
 
         // 跳过数字后空白
         while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n')
@@ -66,23 +123,33 @@ static int LR_Parse_Floats(const char* text, float* out, int max_count)
 }
 
 // ======================== 内部变量 ========================
-static LR_DataTypeCallback g_datatype_cb = NULL;
-static LR_Vector3          g_camera_to_body_offset = { 0.28f, 0.0f, 0.0f };// 视觉坐标系（相机）到机器人身体坐标系的偏移 单位米x方向前正，y方向左正，z方向上正
-static LR_Vector3          g_arm_to_body_offset    = { 0.83f, 0.35f, 0.0f };// 视觉坐标系（相机）到机器人身体坐标系的偏移 单位米x方向前正，y方向左正，z方向上正
-static int yaw_camera_to_body_deg = 0; // 视觉坐标系（相机）到机器人身体坐标系的偏移 角度（单位度，正值表示相机坐标系相对于身体坐标系逆时针旋转）
-static int yaw_arm_to_body_deg    = 0; // 机械臂坐标系到机器人身体坐标系的偏移 角度（单位度，正值表示机械臂坐标系相对于身体坐标系逆时针旋转）
+static LR_DataTypeCallback g_datatype_cb           = NULL;
+static LR_Vector3          g_camera_to_body_offset = { 0.28f,
+                                                       0.0f,
+                                                       0.0f }; // 视觉坐标系（相机）到机器人身体坐标系的偏移
+// 单位米x方向前正，y方向左正，z方向上正
+static LR_Vector3 g_arm_to_body_offset = { 0.83f,
+                                           0.35f,
+                                           0.0f }; // 视觉坐标系（相机）到机器人身体坐标系的偏移
+                                                   // 单位米x方向前正，y方向左正，z方向上正
+static int yaw_camera_to_body_deg =
+        0; // 视觉坐标系（相机）到机器人身体坐标系的偏移
+           // 角度（单位度，正值表示相机坐标系相对于身体坐标系逆时针旋转）
+static int yaw_arm_to_body_deg =
+        0; // 机械臂坐标系到机器人身体坐标系的偏移
+           // 角度（单位度，正值表示机械臂坐标系相对于身体坐标系逆时针旋转）
 constexpr float PI = 3.14159265358979323846f;
 // 已移除测试用全局诊断变量，生产/发布时请使用更轻量的日志或调试接口。
 
 // 环形缓冲区变量（读/写索引 + 计数）
-LR_DataPacket lr_detect_buffer[LR_DATA_MAX_NUM];
-int           lr_detect_count     = 0; // 当前有效数据量
-int           lr_detect_write_idx = 0; // 写索引（下一个要写入的位置）
+LR_DataPacket     lr_detect_buffer[LR_DATA_MAX_NUM];
+int               lr_detect_count      = 0; // 当前有效数据量
+int               lr_detect_write_idx  = 0; // 写索引（下一个要写入的位置）
 volatile uint32_t lr_detect_update_seq = 0;
 
-LR_DataPacket lr_apriltag_buffer[LR_DATA_MAX_NUM];
-int           lr_apriltag_count     = 0; // 当前有效数据量
-int           lr_apriltag_write_idx = 0; // 写索引（下一个要写入的位置）
+LR_DataPacket     lr_apriltag_buffer[LR_DATA_MAX_NUM];
+int               lr_apriltag_count      = 0; // 当前有效数据量
+int               lr_apriltag_write_idx  = 0; // 写索引（下一个要写入的位置）
 volatile uint32_t lr_apriltag_update_seq = 0;
 
 static char lr_rx_line[LR_RX_BUFFER_SIZE];
@@ -112,31 +179,30 @@ void LR_Set_Arm_To_Body_Offset(float x, float y, float z)
     g_arm_to_body_offset.z = z;
 }
 
-void LR_Compute_Target(float x, float y, float z, float yaw,
-                       float* target_x, float* target_y, float* target_yaw)
+void LR_Compute_Target(
+        float x, float y, float z, float yaw, float* target_x, float* target_y, float* target_yaw)
 {
-    float camera_x = 0.0f;
-    float camera_y = 0.0f;
+    float camera_x   = 0.0f;
+    float camera_y   = 0.0f;
     float camera_yaw = 0.0f;
 
-    //位置受到坐标轴颠倒和摄像头于机械臂位置关系的影响
-    camera_x = x;
-    camera_y = LR_CAMERA_REVERSED ? -y : y;
+    // 位置受到坐标轴颠倒和摄像头于机械臂位置关系的影响
+    camera_x   = x;
+    camera_y   = LR_CAMERA_REVERSED ? -y : y;
     camera_yaw = LR_CAMERA_REVERSED ? -yaw : yaw;
 
-    //先换算相机到车体坐标系
+    // 先换算相机到车体坐标系
     float body_x = camera_x + g_camera_to_body_offset.x;
     float body_y = camera_y + g_camera_to_body_offset.y;
 
-    float target_in_body_x = body_x - g_arm_to_body_offset.x * cosf(PI * camera_yaw / 180.0f) 
-    + g_arm_to_body_offset.y * sinf(PI * camera_yaw / 180.0f);
-    float target_in_body_y = body_y - g_arm_to_body_offset.x * sinf(PI * camera_yaw / 180.0f)
-    - g_arm_to_body_offset.y * cosf(PI * camera_yaw / 180.0f);
+    float target_in_body_x = body_x - g_arm_to_body_offset.x * cosf(PI * camera_yaw / 180.0f) +
+                             g_arm_to_body_offset.y * sinf(PI * camera_yaw / 180.0f);
+    float target_in_body_y = body_y - g_arm_to_body_offset.x * sinf(PI * camera_yaw / 180.0f) -
+                             g_arm_to_body_offset.y * cosf(PI * camera_yaw / 180.0f);
 
-    *target_x = target_in_body_x;
-    *target_y = target_in_body_y;
+    *target_x   = target_in_body_x;
+    *target_y   = target_in_body_y;
     *target_yaw = camera_yaw;
-
 }
 
 LR_DataPacket LR_Convert_Packet_CameraToBody(const LR_DataPacket* cam_pkt)
@@ -165,13 +231,13 @@ LR_DataPacket LR_Convert_Packet_CameraToArm(const LR_DataPacket* cam_pkt)
 void LR_Clear_Data_Buffer(void)
 {
     // 清空环形缓冲区所有状态
-    lr_detect_count     = 0;
-    lr_detect_write_idx = 0;
+    lr_detect_count      = 0;
+    lr_detect_write_idx  = 0;
     lr_detect_update_seq = 0;
     memset(lr_detect_buffer, 0, sizeof(lr_detect_buffer));
 
-    lr_apriltag_count     = 0;
-    lr_apriltag_write_idx = 0;
+    lr_apriltag_count      = 0;
+    lr_apriltag_write_idx  = 0;
     lr_apriltag_update_seq = 0;
     memset(lr_apriltag_buffer, 0, sizeof(lr_apriltag_buffer));
 }
@@ -194,15 +260,15 @@ static void LR_Parse_Frame(const char* frame)
     }
     normalized[norm_pos] = '\0';
 
-    const char* start = strstr(normalized, LR_FRAME_HEAD); // 查找帧头 AA,
-    const char* end   = strstr(normalized, LR_FRAME_TAIL); // 查找帧尾 ,BB
-    int has_head_tail = 1;// 默认认为有帧头帧尾，若找不到则降级解析纯数值串
+    const char* start         = strstr(normalized, LR_FRAME_HEAD); // 查找帧头 AA,
+    const char* end           = strstr(normalized, LR_FRAME_TAIL); // 查找帧尾 ,BB
+    int         has_head_tail = 1; // 默认认为有帧头帧尾，若找不到则降级解析纯数值串
     if (!start || !end || end <= start)
     {
         // 兜底：允许直接发送纯数值串 "x,y,z,yaw" 或 "x,y,z,roll,pitch,yaw"
         has_head_tail = 0;
-        start = normalized;
-        end   = normalized + strlen(normalized);
+        start         = normalized;
+        end           = normalized + strlen(normalized);
     }
 
     if (has_head_tail)
@@ -220,16 +286,16 @@ static void LR_Parse_Frame(const char* frame)
     content[len] = '\0';
 
     // 逗号分隔解析数值（strtof手动解析，避免sscanf在嵌入式下不稳定）
-    LR_DataPacket pkt = { 0 };
-    float values[6] = { 0.0f };
-    int n = LR_Parse_Floats(content, values, 6);
+    LR_DataPacket pkt       = { 0 };
+    float         values[6] = { 0.0f };
+    int           n         = LR_Parse_Floats(content, values, 6);
 
     if (n == 4)
     {
-        pkt.x = values[0];
-        pkt.y = values[1];
-        pkt.z = values[2];
-        pkt.roll = values[3];
+        pkt.x       = values[0];
+        pkt.y       = values[1];
+        pkt.z       = values[2];
+        pkt.roll    = values[3];
         pkt.has_rpy = 0;
         pkt.yaw     = pkt.roll; // detect格式，只有yaw（第4个值）
 
@@ -251,18 +317,17 @@ static void LR_Parse_Frame(const char* frame)
         {
             g_datatype_cb(0); // detect类型回调
         }
-        //缓冲区置零
-        
+        // 缓冲区置零
     }
 
     else if (n == 6)
     {
-        pkt.x = values[0];
-        pkt.y = values[1];
-        pkt.z = values[2];
-        pkt.roll = values[3];
-        pkt.pitch = values[4];
-        pkt.yaw = values[5];
+        pkt.x       = values[0];
+        pkt.y       = values[1];
+        pkt.z       = values[2];
+        pkt.roll    = values[3];
+        pkt.pitch   = values[4];
+        pkt.yaw     = values[5];
         pkt.has_rpy = 1; // apriltag格式，含roll/pitch/yaw（4/5/6值）
 
         // 解析成功，写入 apriltag 环形缓冲
@@ -288,8 +353,6 @@ static void LR_Parse_Frame(const char* frame)
         return; // 解析失败
     }
 }
-
-
 
 // ======================== 串口接收入口 ========================
 void LR_Parse_And_Store(uint8_t byte)

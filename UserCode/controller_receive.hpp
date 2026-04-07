@@ -14,21 +14,18 @@ uint8_t CRC8(uint8_t* buffer, uint8_t len);
 // void    Decode(void* argument);
 void Buffer_Decode(void);
 void controller_task(void* argument);
+void Controller_Receive_Callback(void);
+bool ControllerReceive_OnRxCplt(UART_HandleTypeDef* huart);
+bool ControllerReceive_OnError(UART_HandleTypeDef* huart);
+bool ControllerReceive_OnRxEvent(UART_HandleTypeDef* huart, uint16_t size);
 
 typedef enum
 {
-    CHASSIS_MODE = 0,
-    CLAMP_MODE   = 1,
-    ARM_MODE     = 2,
+    CHASSIS_MODE    = 0,
+    CLAMP_MODE      = 1,
+    ARM_MODE        = 2,
     AUTO_ALIGN_MODE = 3
 } JOYSTICK_MODE_E;
-
-// USART2 视觉串口最小诊断计数器（可在调试器Watch窗口直接观察）
-extern volatile uint32_t vision_uart2_diag_rx_irq_cnt;
-extern volatile uint32_t vision_uart2_diag_rx_byte_cnt;
-extern volatile uint32_t vision_uart2_diag_rearm_fail_cnt;
-extern volatile uint32_t vision_uart2_diag_err_cnt;
-extern volatile uint32_t vision_uart2_diag_last_err_code;
 
 void Controller_receiver_Init(void);
 void TIM10_Callback(TIM_HandleTypeDef* htim);
