@@ -39,11 +39,6 @@ void APP_Drawer_BeforeUpdate()
     drawer = new Drawer();
 }
 
-extern "C" void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef* huart, uint16_t size)
-{
-    (void)ControllerReceive_OnRxEvent(huart, size);
-}
-
 extern "C" void Init(void* argument)
 {
     (void)argument;

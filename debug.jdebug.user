@@ -1,0 +1,25 @@
+
+
+
+Breakpoint=/Users/mac/WTR/Projects/R1/26-V2.0-R1-MCU1/UserCode/controller_receive.cpp:104, State=BP_STATE_ON
+Breakpoint=/Users/mac/WTR/Projects/R1/26-V2.0-R1-MCU1/UserCode/controller_receive.cpp:111, State=BP_STATE_ON
+OpenDocument="tasks.c", FilePath="/Users/mac/WTR/Projects/R1/26-V2.0-R1-MCU1/Middlewares/Third_Party/FreeRTOS/Source/tasks.c", Line=3624
+OpenDocument="atomic_base.h", FilePath="/Users/mac/Library/Application Support/stm32cube/bundles/gnu-tools-for-stm32/14.3.1+st.2/arm-none-eabi/include/c++/14.3.1/bits/atomic_base.h", Line=103
+OpenDocument="controller_receive.cpp", FilePath="/Users/mac/WTR/Projects/R1/26-V2.0-R1-MCU1/UserCode/controller_receive.cpp", Line=93
+OpenDocument="main.c", FilePath="/Users/mac/WTR/Projects/R1/26-V2.0-R1-MCU1/Core/Src/main.c", Line=62
+OpenToolbar="Debug", Floating=0, x=0, y=0
+OpenWindow="Registers 1", DockArea=RIGHT, x=0, y=0, w=300, h=484, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0, FilteredItems=[], RefreshRate=1
+OpenWindow="Source Files", DockArea=LEFT, x=0, y=0, w=569, h=293, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0
+OpenWindow="Memory 1", DockArea=BOTTOM, x=2, y=0, w=593, h=315, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0, EditorAddress=0x0
+OpenWindow="Watched Data 1", DockArea=LEFT, x=0, y=1, w=569, h=190, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0
+OpenWindow="Terminal", DockArea=BOTTOM, x=1, y=0, w=248, h=315, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0
+OpenWindow="Console", DockArea=BOTTOM, x=0, y=0, w=597, h=315, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0
+SmartViewPlugin="", Page="", Toolbar="Hidden", Window="SmartView 1"
+TableHeader="Source Files", SortCol="File", SortOrder="DESCENDING", VisibleCols=["File";"Status";"Size";"#Insts";"Path"], ColWidths=[203;100;100;100;1058]
+TableHeader="Power Sampling", SortCol="None", SortOrder="ASCENDING", VisibleCols=["Index";"Time";"Ch 0"], ColWidths=[100;100;100]
+TableHeader="Task List", SortCol="None", SortOrder="ASCENDING", VisibleCols=["Name";"Run Count";"Priority";"Status";"Timeout";"Stack Info";"ID";"Mutex Count";"Notified Value";"Notify State"], ColWidths=[110;110;110;110;110;110;110;110;110;110]
+TableHeader="Registers 1", SortCol="Name", SortOrder="ASCENDING", VisibleCols=["Name";"Value";"Description"], ColWidths=[100;105;152]
+TableHeader="RegisterSelectionDialog", SortCol="None", SortOrder="ASCENDING", VisibleCols=[], ColWidths=[]
+TableHeader="TargetExceptionDialog", SortCol="Name", SortOrder="ASCENDING", VisibleCols=["Name";"Value";"Address";"Description"], ColWidths=[26;26;26;26]
+TableHeader="Watched Data 1", SortCol="Expression", SortOrder="ASCENDING", VisibleCols=["Expression";"Value";"Location";"Refresh";"Access"], ColWidths=[100;163;100;100;106]
+WatchedExpression="joystick_mode", RefreshRate=5, Window=Watched Data 1

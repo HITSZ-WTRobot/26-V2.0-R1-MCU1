@@ -1,6 +1,7 @@
 #include "controller_receive.hpp"
 #include "chassis.hpp"
 #include "interboard_comm.hpp"
+#include "stm32f4xx_hal_uart.h"
 #include "vision_auto_align.hpp"
 #include "watchdog.hpp"
 #include <cstdint>
@@ -105,12 +106,11 @@ void Controller_Receive_Callback(void)
     __HAL_DMA_DISABLE_IT(huart1.hdmarx, DMA_IT_HT);
 }
 
-bool ControllerReceive_OnRxCplt(UART_HandleTypeDef* huart)
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef* huart)
 {
     if (huart->Instance == USART1)
     {
         Controller_Receive_Callback();
-        return true;
     }
 
     if (huart->Instance == UART4)
@@ -118,13 +118,9 @@ bool ControllerReceive_OnRxCplt(UART_HandleTypeDef* huart)
         const uint8_t rx_byte = interboard_uart4_rx_byte;
         if (HAL_UART_Receive_IT(&huart4, &interboard_uart4_rx_byte, 1) != HAL_OK)
         {
-            return true;
         }
         InterboardComm_OnUartByte(rx_byte);
-        return true;
     }
-
-    return false;
 }
 
 bool ControllerReceive_OnError(UART_HandleTypeDef* huart)
@@ -143,17 +139,14 @@ bool ControllerReceive_OnError(UART_HandleTypeDef* huart)
     return false;
 }
 
-bool ControllerReceive_OnRxEvent(UART_HandleTypeDef* huart, uint16_t Size)
+void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef* huart, uint16_t Size)
 {
     if (huart->Instance == USART1)
     {
         ProcessRxBytes(rx_dma_buf, Size);
         HAL_UARTEx_ReceiveToIdle_DMA(&huart1, rx_dma_buf, RX_DMA_BUF_SIZE);
         __HAL_DMA_DISABLE_IT(huart1.hdmarx, DMA_IT_HT);
-        return true;
     }
-
-    return false;
 }
 
 void controller_task(void* argument)
