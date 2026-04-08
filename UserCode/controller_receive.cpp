@@ -3,6 +3,7 @@
 #include "interboard_comm.hpp"
 #include "stm32f4xx_hal_uart.h"
 #include "vision_auto_align.hpp"
+#include "vision_receive.hpp"
 #include "watchdog.hpp"
 #include <cstdint>
 #include <string.h>
@@ -121,6 +122,21 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef* huart)
         }
         InterboardComm_OnUartByte(rx_byte);
     }
+
+    if (huart->Instance == USART2)
+    {
+        (void)CammeraReceive_OnRxCplt(huart);
+    }
+}
+
+void HAL_UART_ErrorCallback(UART_HandleTypeDef* huart)
+{
+    if (ControllerReceive_OnError(huart))
+    {
+        return;
+    }
+
+    (void)CammeraReceive_OnError(huart);
 }
 
 bool ControllerReceive_OnError(UART_HandleTypeDef* huart)

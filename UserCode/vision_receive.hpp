@@ -88,6 +88,7 @@ extern volatile uint8_t  lr_diag_last_status; // 最近一次成功解析的状�
 // ======================== 接口函数 ========================
 
 #include "usart.h"
+#include "cmsis_os2.h"
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -118,6 +119,11 @@ void LR_Parse_And_Store(uint8_t byte);
  * @return true 发送调用成功；false 发送失败
  */
 bool LR_Send_Frame(float x, float y, float yaw, uint8_t status);
+
+/**
+ * @brief 设置1Hz请求发送的相机ID字节
+ */
+void LR_Set_RequestCameraId(uint8_t camera_id);
 
 /**
  * @brief 清空所有已接收并解析的数据包缓存

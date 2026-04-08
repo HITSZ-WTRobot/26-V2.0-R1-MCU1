@@ -21,6 +21,27 @@
 #include "vision_receive.hpp"
 
 static uint8_t g_lr_uart2_rx_byte = 0;
+static LR_DataTypeCallback g_datatype_cb = NULL;
+
+static osThreadId_t         vision_parse_thread_handle   = NULL;
+static osThreadId_t         vision_request_thread_handle = NULL;
+static const osThreadAttr_t vision_parse_thread_attr     = {
+    .name       = "vision_parse",
+    .stack_size = 256 * 8,
+    .priority   = (osPriority_t)osPriorityAboveNormal,
+};
+static const osThreadAttr_t vision_request_thread_attr = {
+    .name       = "vision_req",
+    .stack_size = 128 * 8,
+    .priority   = (osPriority_t)osPriorityNormal,
+};
+
+#define LR_RX_RING_SIZE 256U
+static uint8_t          g_rx_ring[LR_RX_RING_SIZE]    = { 0 };
+static volatile uint16_t g_rx_ring_head               = 0U;
+static volatile uint16_t g_rx_ring_tail               = 0U;
+static volatile uint32_t g_rx_ring_overflow_cnt       = 0U;
+static volatile uint8_t  g_request_camera_id          = 0x01U;
 
 volatile uint32_t vision_rx_irq_cnt    = 0;
 volatile uint32_t vision_rx_byte_cnt   = 0;
@@ -40,8 +61,90 @@ volatile uint32_t lr_diag_last_raw_len      = 0;
 volatile char     lr_diag_last_raw_frame[LR_RX_BUFFER_SIZE] = { 0 };
 volatile uint8_t  lr_diag_last_status       = 0;
 
+//环形缓冲区操作：推入一个字节，成功返回true，失败（满）返回false
+static bool LR_RingPushByte(uint8_t byte)
+{
+    const uint16_t head      = g_rx_ring_head;
+    const uint16_t next_head = (uint16_t)((head + 1U) % LR_RX_RING_SIZE);
+    if (next_head == g_rx_ring_tail)
+    {
+        return false;
+    }
+
+    g_rx_ring[head] = byte;
+    g_rx_ring_head  = next_head;
+    return true;
+}
+
+//环形缓冲区操作：弹出一个字节，成功返回true并通过out参数输出，失败（空）返回false
+static bool LR_RingPopByte(uint8_t* out)
+{
+    if (!out)
+    {
+        return false;
+    }
+
+    const uint16_t tail = g_rx_ring_tail;
+    if (tail == g_rx_ring_head)
+    {
+        return false;
+    }
+
+    *out          = g_rx_ring[tail];
+    g_rx_ring_tail = (uint16_t)((tail + 1U) % LR_RX_RING_SIZE);
+    return true;
+}
+
+// 串口接受线程：持续从环形缓冲区读取字节并解析
+static void VisionParseTask(void* argument)
+{
+    (void)argument;
+    for (;;)
+    {
+        uint8_t byte = 0U;
+        if (LR_RingPopByte(&byte))
+        {
+            LR_Parse_And_Store(byte);
+            continue;
+        }
+
+        osDelay(1);
+    }
+}
+
+// 定时请求线程：每秒发送一次请求字节，触发相机发送数据
+static void VisionRequestTask(void* argument)
+{
+    (void)argument;
+    for (;;)
+    {
+        const uint8_t req = g_request_camera_id;
+        if (HAL_UART_Transmit(&huart2, (uint8_t*)&req, 1U, 10U) != HAL_OK)
+        {
+            vision_fail_cnt++;
+        }
+        osDelay(1000);
+    }
+}
+
+// ======================== 接口实现 ========================
 void CammeraReceive_Init(void)
 {
+    g_rx_ring_head = 0U;
+    g_rx_ring_tail = 0U;
+    g_rx_ring_overflow_cnt = 0U;
+
+    if (!vision_parse_thread_handle)
+    {
+        vision_parse_thread_handle = osThreadNew(VisionParseTask, NULL, &vision_parse_thread_attr);
+    }
+
+    if (!vision_request_thread_handle)
+    {
+        vision_request_thread_handle =
+                osThreadNew(VisionRequestTask, NULL, &vision_request_thread_attr);
+    }
+
     if (HAL_UART_Receive_IT(&huart2, &g_lr_uart2_rx_byte, 1) != HAL_OK)
     {
         vision_fail_cnt++;
@@ -50,6 +153,11 @@ void CammeraReceive_Init(void)
 
 bool CammeraReceive_OnRxCplt(UART_HandleTypeDef* huart)
 {
+    if (huart->Instance != USART2)
+    {
+        return false;
+    }
+
     const uint8_t rx_byte = g_lr_uart2_rx_byte;
     vision_rx_irq_cnt++;
     vision_rx_byte_cnt++;
@@ -61,7 +169,12 @@ bool CammeraReceive_OnRxCplt(UART_HandleTypeDef* huart)
         return true;
     }
 
-    LR_Parse_And_Store(rx_byte);
+    if (!LR_RingPushByte(rx_byte))
+    {
+        g_rx_ring_overflow_cnt++;
+        vision_fail_cnt++;
+    }
+
     return true;
 }
 
@@ -89,6 +202,7 @@ bool CammeraReceive_OnError(UART_HandleTypeDef* huart)
     return true;
 }
 
+//CRC8计算，输入为数据部分（不包含帧头AA和帧尾BB），输出为CRC8校验码
 static uint8_t LR_CRC8_Payload(const uint8_t* data, uint8_t len)
 {
     uint8_t crc = 0;
@@ -108,6 +222,11 @@ static uint8_t LR_CRC8_Payload(const uint8_t* data, uint8_t len)
         }
     }
     return crc;
+}
+
+void LR_Set_RequestCameraId(uint8_t camera_id)
+{
+    g_request_camera_id = camera_id;
 }
 
 //小端序浮点数编码/解码（IEEE 754单精度）
@@ -154,7 +273,6 @@ static void LR_PushDetectPacket(const LR_DataPacket* pkt)
 }
 
 // ======================== 内部变量 ========================
-static LR_DataTypeCallback g_datatype_cb           = NULL;
 static LR_Vector3          g_camera_to_body_offset = { 0.28f,
                                                        0.0f,
                                                        0.0f }; // 视觉坐标系（相机）到机器人身体坐标系的偏移
@@ -271,6 +389,11 @@ void LR_Clear_Data_Buffer(void)
 
     g_frame_pos = 0;
     memset(g_frame_buf, 0, sizeof(g_frame_buf));
+
+    g_rx_ring_head = 0U;
+    g_rx_ring_tail = 0U;
+    g_rx_ring_overflow_cnt = 0U;
+    memset(g_rx_ring, 0, sizeof(g_rx_ring));
 }
 
 bool LR_Send_Frame(float x, float y, float yaw, uint8_t status)
