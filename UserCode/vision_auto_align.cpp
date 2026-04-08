@@ -4,11 +4,15 @@
 #include "vision_receive.hpp"
 #include <cmath>
 
-constexpr uint32_t kVisionLostCycleThreshold   = 10U; // controller_task 10ms周期，约100ms
-constexpr uint32_t kAutoAlignAverageFrameCount = 20U;
-constexpr float    kInterboardRetreatDistanceM = 0.20f;
-constexpr float    kMmToMScale                 = 0.001f;
-constexpr float    kVisionLpfAlpha             = 0.85f;
+constexpr uint32_t kVisionLostCycleThreshold        = 10U; // controller_task 10ms周期，约100ms
+constexpr uint32_t kAutoAlignWindowCapacity           = 20U;  // 滤波窗口容量
+constexpr float    kAutoAlignOutlierThresholdM        = 0.05f; // 位置离群值阈值，单位米
+constexpr float    kAutoAlignOutlierThresholdDeg      = 2.0f; // 朝向离群值阈值，单位度
+constexpr float    kInterboardRetreatDistanceM        = 0.20f;
+constexpr float    kMmToMScale                 = 0.001f; // 板间通信的目标单位为毫米，这个常量用于转换为米以供自动对齐使用
+
+//滤波系数和限幅值，自动对齐时每周期（10ms）允许的最大调整量，过大可能导致震荡，过小可能导致响应迟钝
+constexpr float    kVisionLpfAlpha             = 0.85f; 
 constexpr float    kVisionMaxStepPerCycleM     = 0.03f;
 constexpr float    kVisionMaxStepPerCycleDeg   = 12.0f;
 constexpr float    kVisionPosDeadbandM         = 0.03f;
@@ -19,17 +23,17 @@ constexpr float    kAutoAlignYawLockDeg        = 2.0f;
 static uint32_t g_vision_last_update_seq       = 0U;
 static uint32_t g_vision_stale_cycles          = 0U;
 static bool     g_auto_align_pos_executed_once = false;
-static uint32_t g_auto_align_sample_count      = 0U;
+static uint32_t g_auto_align_window_count      = 0U;  // 窗口中当前有效样本数
 static uint32_t g_auto_align_last_sample_seq   = 0U;
-static float    g_auto_align_sum_x             = 0.0f;
-static float    g_auto_align_sum_y             = 0.0f;
-static float    g_auto_align_sum_yaw           = 0.0f;
-static bool     g_step_cmd_active              = false;
-static bool     g_interboard_retreat_active    = false;
-static bool     g_interboard_retreat_last_req  = false;
-static bool     g_emergency_hold_active        = false;
-static bool     g_wait_interboard_target       = false;
-static bool     g_vision_filter_inited         = false;
+static float    g_auto_align_window_x          = 0.0f; // 窗口内X坐标累加和
+static float    g_auto_align_window_y          = 0.0f; // 窗口内Y坐标累加和
+static float    g_auto_align_window_yaw        = 0.0f; // 窗口内朝向累加和
+static bool     g_step_cmd_active              = false; 
+static bool     g_interboard_retreat_active    = false; // 板间通信的后退命令生效中标志
+static bool     g_interboard_retreat_last_req  = false; // 上一周期板间通信的后退命令请求状态
+static bool     g_emergency_hold_active        = false; // 紧急停止状态，触发后立即停止底盘并禁止自动对齐流程，直到手动重置
+static bool     g_wait_interboard_target       = false; // 是否在等待板间通信的新目标，若为true则暂不接受视觉输入以覆盖目标，直到收到新目标或超时
+static bool     g_vision_filter_inited         = false; // 视觉输入滤波器是否已初始化，未初始化时直接将首个输入作为滤波器初始值
 static float    g_target_x_filtered            = 0.0f;
 static float    g_target_y_filtered            = 0.0f;
 
@@ -38,6 +42,7 @@ static inline float ClampFloat(float value, float min_value, float max_value)
     return value < min_value ? min_value : (value > max_value ? max_value : value);
 }
 
+//滤波控制，闭环位置坐标滤波
 static void ApplyVisionTargetFilter(float raw_x, float raw_y, float* out_x, float* out_y)
 {
     if (!out_x || !out_y)
@@ -75,6 +80,7 @@ static void ApplyVisionTargetFilter(float raw_x, float raw_y, float* out_x, floa
     *out_y = g_target_y_filtered;
 }
 
+//滤波控制，闭环朝向滤波
 static void ApplyYawTargetFilter(float raw_yaw, float* yaw)
 {
     if (!yaw)
@@ -94,12 +100,14 @@ static void ApplyYawTargetFilter(float raw_yaw, float* yaw)
     *yaw = yaw_output;
 }
 
+//监测机械臂自动流程控制的触发按键，避免与底盘控制按键冲突
 static bool ArmActionKeyTriggered(uint32_t button_status)
 {
     return ((button_status & (1U << 0)) != 0U) || ((button_status & (1U << 2)) != 0U) ||
            ((button_status & (1U << 6)) != 0U);
 }
 
+//监测紧急停止按键，触发后立即停止底盘并禁止自动对齐流程，直到手动重置
 static void AbortAutoAlignAndStop(float*              target_x,
                                   float*              target_y,
                                   float*              target_yaw,
@@ -125,6 +133,7 @@ static void AbortAutoAlignAndStop(float*              target_x,
     chassis_v->wz               = 0.0f;
 }
 
+// 应用板间通信接收到的目标，优先级高于视觉输入
 static bool TryApplyInterboardTarget(float*        target_x,
                                      float*        target_y,
                                      float*        target_yaw,
@@ -156,6 +165,7 @@ static bool TryApplyInterboardTarget(float*        target_x,
     return true;
 }
 
+// 应用板间通信的后退命令，优先级高于视觉输入和自动对齐流程
 static void ApplyInterboardRetreatByPosition(float*              target_x,
                                              float*              target_y,
                                              float*              target_yaw,
@@ -199,16 +209,17 @@ static void ApplyInterboardRetreatByPosition(float*              target_x,
     }
 }
 
+
 void VisionAutoAlign_ResetState(void)
 {
     g_vision_last_update_seq       = 0U;
     g_vision_stale_cycles          = 0U;
     g_auto_align_pos_executed_once = false;
-    g_auto_align_sample_count      = 0U;
+    g_auto_align_window_count      = 0U;
     g_auto_align_last_sample_seq   = 0U;
-    g_auto_align_sum_x             = 0.0f;
-    g_auto_align_sum_y             = 0.0f;
-    g_auto_align_sum_yaw           = 0.0f;
+    g_auto_align_window_x          = 0.0f;
+    g_auto_align_window_y          = 0.0f;
+    g_auto_align_window_yaw        = 0.0f;
     g_step_cmd_active              = false;
     g_interboard_retreat_active    = false;
     g_interboard_retreat_last_req  = false;
@@ -224,6 +235,7 @@ void VisionAutoAlign_OnModeEnter(void)
     VisionAutoAlign_ResetState();
 }
 
+//应用视觉对齐坐标
 static bool VisionAutoAlign_Apply(float*              target_x,
                                   float*              target_y,
                                   float*              target_yaw,
@@ -305,26 +317,48 @@ static bool VisionAutoAlign_Apply(float*              target_x,
     ApplyVisionTargetFilter(sample_target_x, sample_target_y, &sample_target_x, &sample_target_y);
     ApplyYawTargetFilter(sample_target_yaw, &sample_target_yaw);
 
-    g_auto_align_sum_x += sample_target_x;
-    g_auto_align_sum_y += sample_target_y;
-    g_auto_align_sum_yaw += sample_target_yaw;
-    g_auto_align_sample_count++;
+    // 窗口滤波：检查新样本是否为离群值
+    if (g_auto_align_window_count > 0U)
+    {
+        const float window_avg_x   = g_auto_align_window_x / (float)g_auto_align_window_count;
+        const float window_avg_y   = g_auto_align_window_y / (float)g_auto_align_window_count;
+        const float window_avg_yaw = g_auto_align_window_yaw / (float)g_auto_align_window_count;
+        
+        const float delta_x   = fabsf(sample_target_x - window_avg_x);
+        const float delta_y   = fabsf(sample_target_y - window_avg_y);
+        const float delta_yaw = fabsf(sample_target_yaw - window_avg_yaw);
+        const float delta_pos = sqrtf(delta_x * delta_x + delta_y * delta_y);
+        
+        // 如果位置或朝向偏差过大则舍弃该样本
+        if (delta_pos > kAutoAlignOutlierThresholdM || delta_yaw > kAutoAlignOutlierThresholdDeg)
+        {
+            return true; // 舍弃离群值，继续等待下一个样本
+        }
+    }
 
-    if (g_auto_align_sample_count < kAutoAlignAverageFrameCount)
+    // 样本有效，加入窗口
+    g_auto_align_window_x += sample_target_x;
+    g_auto_align_window_y += sample_target_y;
+    g_auto_align_window_yaw += sample_target_yaw;
+    g_auto_align_window_count++;
+
+    if (g_auto_align_window_count < kAutoAlignWindowCapacity)
     {
         return true;
     }
 
-    const float inv_count          = 1.0f / (float)g_auto_align_sample_count;
-    *target_x                      = g_auto_align_sum_x * inv_count;
-    *target_y                      = g_auto_align_sum_y * inv_count;
-    *target_yaw                    = g_auto_align_sum_yaw * inv_count;
+    // 窗口满，计算平均值并应用
+    const float inv_count          = 1.0f / (float)g_auto_align_window_count;
+    *target_x                      = g_auto_align_window_x * inv_count;
+    *target_y                      = g_auto_align_window_y * inv_count;
+    *target_yaw                    = g_auto_align_window_yaw * inv_count;
     *chassis_control_mode          = POS_Control;
     g_auto_align_pos_executed_once = true;
 
     return true;
 }
 
+// 自动对齐遥控模式下的总逻辑流程，后续可以对应到按键进行更改
 void VisionAutoAlign_RunMode(uint32_t            button_status,
                              bool                button8_pressed,
                              float*              target_x,
