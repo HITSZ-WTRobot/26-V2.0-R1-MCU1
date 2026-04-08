@@ -1,9 +1,7 @@
 #include "controller_receive.hpp"
 #include "chassis.hpp"
-#include "interboard_comm.hpp"
 #include "stm32f4xx_hal_uart.h"
 #include "vision_auto_align.hpp"
-#include "vision_receive.hpp"
 #include "watchdog.hpp"
 #include <cstdint>
 #include <string.h>
@@ -21,7 +19,6 @@ static uint8_t rx_dma_buf[RX_DMA_BUF_SIZE];
 static uint8_t rx_frame_buf[RAWDATA_SIZE];
 
 static uint8_t  rx_frame_fill            = 0;
-static uint8_t  interboard_uart4_rx_byte = 0;
 uint32_t        decodesuccess_count      = 0;            // 成功解码次数
 bool            decode_enable            = false;        // 解码使能标志
 bool            is_controller_connected  = true;         // 遥控器连接状态
@@ -93,11 +90,6 @@ void Controller_receiver_Init(void)
     osThreadNew(controller_task, NULL, &controller_attributes);
     HAL_UARTEx_ReceiveToIdle_DMA(&huart1, rx_dma_buf, RX_DMA_BUF_SIZE);
     __HAL_DMA_DISABLE_IT(huart1.hdmarx, DMA_IT_HT);
-
-    if (HAL_UART_Receive_IT(&huart4, &interboard_uart4_rx_byte, 1) != HAL_OK)
-    {
-        // UART4 版间通信若启动失败，InterboardComm 内部会保持超时保护。
-    }
 }
 
 void Controller_Receive_Callback(void)
@@ -107,51 +99,25 @@ void Controller_Receive_Callback(void)
     __HAL_DMA_DISABLE_IT(huart1.hdmarx, DMA_IT_HT);
 }
 
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef* huart)
+bool ControllerReceive_OnRxCplt(UART_HandleTypeDef* huart)
 {
+    if (!huart)
+    {
+        return false;
+    }
+
     if (huart->Instance == USART1)
     {
         Controller_Receive_Callback();
+        return true;
     }
 
-    if (huart->Instance == UART4)
-    {
-        const uint8_t rx_byte = interboard_uart4_rx_byte;
-        if (HAL_UART_Receive_IT(&huart4, &interboard_uart4_rx_byte, 1) != HAL_OK)
-        {
-        }
-        InterboardComm_OnUartByte(rx_byte);
-    }
-
-    if (huart->Instance == USART2)
-    {
-        (void)CammeraReceive_OnRxCplt(huart);
-    }
-}
-
-void HAL_UART_ErrorCallback(UART_HandleTypeDef* huart)
-{
-    if (ControllerReceive_OnError(huart))
-    {
-        return;
-    }
-
-    (void)CammeraReceive_OnError(huart);
+    return false;
 }
 
 bool ControllerReceive_OnError(UART_HandleTypeDef* huart)
 {
-    if (huart->Instance == UART4)
-    {
-        __HAL_UART_CLEAR_PEFLAG(huart);
-        __HAL_UART_CLEAR_FEFLAG(huart);
-        __HAL_UART_CLEAR_NEFLAG(huart);
-        __HAL_UART_CLEAR_OREFLAG(huart);
-
-        (void)HAL_UART_Receive_IT(&huart4, &interboard_uart4_rx_byte, 1);
-        return true;
-    }
-
+    (void)huart;
     return false;
 }
 

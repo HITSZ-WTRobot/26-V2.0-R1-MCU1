@@ -26,6 +26,8 @@ volatile int32_t g_target_x_mm = 0;
 volatile int32_t g_target_y_mm = 0;
 volatile int32_t g_target_yaw_mm = 0;
 
+static uint8_t g_rx_byte = 0U;
+
 uint8_t g_rx_state = 0U;
 uint8_t g_rx_payload_len = 0U;
 uint8_t g_rx_payload_fill = 0U;
@@ -159,6 +161,25 @@ void InterboardComm_Init(void) {
   g_rx_payload_len = 0U;
   g_rx_payload_fill = 0U;
   g_target_pending = 0U;
+
+  (void)HAL_UART_Receive_IT(&huart4, &g_rx_byte, 1U);
+}
+
+bool InterboardComm_OnRxCplt(void *huart) {
+  if (huart != (void *)&huart4) {
+    return false;
+  }
+  InterboardComm_OnUartByte(g_rx_byte);
+  (void)HAL_UART_Receive_IT(&huart4, &g_rx_byte, 1U);
+  return true;
+}
+
+bool InterboardComm_OnError(void *huart) {
+  if (huart != (void *)&huart4) {
+    return false;
+  }
+  (void)HAL_UART_Receive_IT(&huart4, &g_rx_byte, 1U);
+  return true;
 }
 
 void InterboardComm_SendRetreatCommand(bool enable) {

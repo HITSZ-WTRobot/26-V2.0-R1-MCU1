@@ -41,6 +41,8 @@ static uint8_t          g_rx_ring[LR_RX_RING_SIZE]    = { 0 };
 static volatile uint16_t g_rx_ring_head               = 0U;
 static volatile uint16_t g_rx_ring_tail               = 0U;
 static volatile uint32_t g_rx_ring_overflow_cnt       = 0U;
+
+//相机id请求定时器回调中使用，默认请求id=1
 static volatile uint8_t  g_request_camera_id          = 0x01U;
 
 volatile uint32_t vision_rx_irq_cnt    = 0;
@@ -112,7 +114,7 @@ static void VisionParseTask(void* argument)
     }
 }
 
-// 定时请求线程：每秒发送一次请求字节，触发相机发送数据
+// 定时请求线程：每秒发送一次请求字节，请求相应的相机数据
 static void VisionRequestTask(void* argument)
 {
     (void)argument;
