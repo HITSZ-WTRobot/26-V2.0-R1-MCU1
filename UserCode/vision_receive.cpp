@@ -28,6 +28,18 @@ volatile uint32_t vision_fail_cnt      = 0;
 volatile uint32_t vision_err_cnt       = 0;
 volatile uint32_t vision_last_err_code = 0;
 
+volatile uint32_t lr_diag_parse_ok_count    = 0;
+volatile uint32_t lr_diag_parse_fail_count  = 0;
+volatile float    lr_diag_last_x            = 0.0f;
+volatile float    lr_diag_last_y            = 0.0f;
+volatile float    lr_diag_last_z            = 0.0f;
+volatile float    lr_diag_last_yaw          = 0.0f;
+volatile uint8_t  lr_diag_last_type         = 0;
+volatile uint8_t  lr_diag_last_fail_stage   = 0;
+volatile uint32_t lr_diag_last_raw_len      = 0;
+volatile char     lr_diag_last_raw_frame[LR_RX_BUFFER_SIZE] = { 0 };
+volatile uint8_t  lr_diag_last_status       = 0;
+
 void CammeraReceive_Init(void)
 {
     if (HAL_UART_Receive_IT(&huart2, &g_lr_uart2_rx_byte, 1) != HAL_OK)
@@ -77,49 +89,68 @@ bool CammeraReceive_OnError(UART_HandleTypeDef* huart)
     return true;
 }
 
-static int LR_Parse_Floats(const char* text, float* out, int max_count)
+static uint8_t LR_CRC8_Payload(const uint8_t* data, uint8_t len)
 {
-    int         count = 0;
-    const char* p     = text;
-
-    while (*p != '\0' && count < max_count)
+    uint8_t crc = 0;
+    for (uint8_t i = 0; i < len; i++)
     {
-        // 跳过前导空白
-        while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n')
+        crc ^= data[i];
+        for (uint8_t j = 0; j < 8; j++)
         {
-            p++;
+            if (crc & 0x80)
+            {
+                crc = (uint8_t)((crc << 1) ^ 0x07U);
+            }
+            else
+            {
+                crc <<= 1;
+            }
         }
+    }
+    return crc;
+}
 
-        char* endptr = NULL;
-        float v      = strtof(p, &endptr);
-        if (endptr == p)
-        {
-            break;
-        }
-        out[count++] = v;
-        p            = endptr;
+//小端序浮点数编码/解码（IEEE 754单精度）
+static void LR_EncodeFloatLE(float value, uint8_t* out4)
+{
+    uint32_t bits = 0;
+    memcpy(&bits, &value, sizeof(bits));
+    out4[0] = (uint8_t)(bits & 0xFFU);
+    out4[1] = (uint8_t)((bits >> 8) & 0xFFU);
+    out4[2] = (uint8_t)((bits >> 16) & 0xFFU);
+    out4[3] = (uint8_t)((bits >> 24) & 0xFFU);
+}
 
-        // 跳过数字后空白
-        while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n')
-        {
-            p++;
-        }
+// 小端序浮点数解码（IEEE 754单精度）
+static float LR_DecodeFloatLE(const uint8_t* in4)
+{
+    const uint32_t bits = ((uint32_t)in4[0]) | ((uint32_t)in4[1] << 8) |
+                          ((uint32_t)in4[2] << 16) | ((uint32_t)in4[3] << 24);
+    float value = 0.0f;
+    memcpy(&value, &bits, sizeof(value));
+    return value;
+}
 
-        if (*p == ',')
-        {
-            p++;
-            continue;
-        }
-        if (*p == '\0')
-        {
-            break;
-        }
-
-        // 非逗号分隔，判为格式结束
-        break;
+// 将成功解析的数据包存入detect环形缓冲区，并更新相关计数和序号
+static void LR_PushDetectPacket(const LR_DataPacket* pkt)
+{
+    if (!pkt)
+    {
+        return;
     }
 
-    return count;
+    lr_detect_buffer[lr_detect_write_idx] = *pkt;
+    lr_detect_write_idx                   = (lr_detect_write_idx + 1) % LR_DATA_MAX_NUM;
+    if (lr_detect_count < LR_DATA_MAX_NUM)
+    {
+        lr_detect_count++;
+    }
+    lr_detect_update_seq++;
+
+    if (g_datatype_cb)
+    {
+        g_datatype_cb(0);
+    }
 }
 
 // ======================== 内部变量 ========================
@@ -152,12 +183,8 @@ int               lr_apriltag_count      = 0; // 当前有效数据量
 int               lr_apriltag_write_idx  = 0; // 写索引（下一个要写入的位置）
 volatile uint32_t lr_apriltag_update_seq = 0;
 
-static char lr_rx_line[LR_RX_BUFFER_SIZE];
-static int  lr_rx_line_pos = 0;
-
-// 帧头/帧尾：逗号分隔格式
-#define LR_FRAME_HEAD "AA," // 帧头：AA,
-#define LR_FRAME_TAIL ",BB" // 帧尾：,BB
+static uint8_t g_frame_buf[LR_VISION_FRAME_SIZE] = { 0 };
+static uint8_t g_frame_pos                       = 0;
 
 // ======================== 回调注册 ========================
 void LR_Set_DataType_Callback(LR_DataTypeCallback cb)
@@ -178,7 +205,8 @@ void LR_Set_Arm_To_Body_Offset(float x, float y, float z)
     g_arm_to_body_offset.y = y;
     g_arm_to_body_offset.z = z;
 }
-
+// ======================== 主要功能实现 ========================
+// target解算
 void LR_Compute_Target(
         float x, float y, float z, float yaw, float* target_x, float* target_y, float* target_yaw)
 {
@@ -204,7 +232,7 @@ void LR_Compute_Target(
     *target_y   = target_in_body_y;
     *target_yaw = camera_yaw;
 }
-
+// 将相机坐标系下的点转换为车体坐标系下的点
 LR_DataPacket LR_Convert_Packet_CameraToBody(const LR_DataPacket* cam_pkt)
 {
     LR_DataPacket out = { 0 };
@@ -215,7 +243,7 @@ LR_DataPacket LR_Convert_Packet_CameraToBody(const LR_DataPacket* cam_pkt)
     LR_Convert_CameraPoint_To_Body(cam_pkt->x, cam_pkt->y, cam_pkt->z, &out.x, &out.y, &out.z);
     return out;
 }
-
+// 将数据包中的位置从相机基准转换为机械臂基准（姿态字段保持不变）
 LR_DataPacket LR_Convert_Packet_CameraToArm(const LR_DataPacket* cam_pkt)
 {
     LR_DataPacket out = { 0 };
@@ -240,170 +268,81 @@ void LR_Clear_Data_Buffer(void)
     lr_apriltag_write_idx  = 0;
     lr_apriltag_update_seq = 0;
     memset(lr_apriltag_buffer, 0, sizeof(lr_apriltag_buffer));
+
+    g_frame_pos = 0;
+    memset(g_frame_buf, 0, sizeof(g_frame_buf));
 }
 
-// ======================== 数据帧解析 ========================
-static void LR_Parse_Frame(const char* frame)
+bool LR_Send_Frame(float x, float y, float yaw, uint8_t status)
 {
-    // 不再维护测试用全局原始帧缓冲，直接在本地处理。
+    uint8_t frame[LR_VISION_FRAME_SIZE] = { 0 };
 
-    char normalized[LR_RX_BUFFER_SIZE];
-    int  norm_pos = 0;
-    for (int i = 0; frame[i] != '\0' && norm_pos < LR_RX_BUFFER_SIZE - 1; ++i)
-    {
-        const unsigned char ch = (unsigned char)frame[i];
-        if (ch == '\r' || ch == '\n' || ch == ' ' || ch == '\t')
-        {
-            continue;
-        }
-        normalized[norm_pos++] = (char)toupper(ch);
-    }
-    normalized[norm_pos] = '\0';
+    frame[0] = LR_VISION_FRAME_HEADER;
+    LR_EncodeFloatLE(x, &frame[1]);
+    LR_EncodeFloatLE(y, &frame[5]);
+    LR_EncodeFloatLE(yaw, &frame[9]);
+    frame[13] = status;
+    frame[14] = LR_CRC8_Payload(&frame[1], 13);
 
-    const char* start         = strstr(normalized, LR_FRAME_HEAD); // 查找帧头 AA,
-    const char* end           = strstr(normalized, LR_FRAME_TAIL); // 查找帧尾 ,BB
-    int         has_head_tail = 1; // 默认认为有帧头帧尾，若找不到则降级解析纯数值串
-    if (!start || !end || end <= start)
-    {
-        // 兜底：允许直接发送纯数值串 "x,y,z,yaw" 或 "x,y,z,roll,pitch,yaw"
-        has_head_tail = 0;
-        start         = normalized;
-        end           = normalized + strlen(normalized);
-    }
-
-    if (has_head_tail)
-    {
-        start += 3; // 跳过帧头 AA,
-    }
-
-    int len = (int)(end - start);
-    if (len <= 0 || len >= LR_RX_BUFFER_SIZE)
-    {
-        return; // 长度异常，直接返回
-    }
-    char content[LR_RX_BUFFER_SIZE];
-    strncpy(content, start, len);
-    content[len] = '\0';
-
-    // 逗号分隔解析数值（strtof手动解析，避免sscanf在嵌入式下不稳定）
-    LR_DataPacket pkt       = { 0 };
-    float         values[6] = { 0.0f };
-    int           n         = LR_Parse_Floats(content, values, 6);
-
-    if (n == 4)
-    {
-        pkt.x       = values[0];
-        pkt.y       = values[1];
-        pkt.z       = values[2];
-        pkt.roll    = values[3];
-        pkt.has_rpy = 0;
-        pkt.yaw     = pkt.roll; // detect格式，只有yaw（第4个值）
-
-        // 解析成功，写入 detect 环形缓冲
-
-        // 写入当前写索引位置
-        lr_detect_buffer[lr_detect_write_idx] = pkt;
-        // 更新写索引（循环：0→1→...→MAX-1→0）
-        lr_detect_write_idx = (lr_detect_write_idx + 1) % LR_DATA_MAX_NUM;
-        // 有效计数不超过最大值
-        if (lr_detect_count < LR_DATA_MAX_NUM)
-        {
-            lr_detect_count++;
-        }
-        lr_detect_update_seq++;
-        // （满员时：count保持MAX，写索引循环覆盖最旧数据）
-
-        if (g_datatype_cb)
-        {
-            g_datatype_cb(0); // detect类型回调
-        }
-        // 缓冲区置零
-    }
-
-    else if (n == 6)
-    {
-        pkt.x       = values[0];
-        pkt.y       = values[1];
-        pkt.z       = values[2];
-        pkt.roll    = values[3];
-        pkt.pitch   = values[4];
-        pkt.yaw     = values[5];
-        pkt.has_rpy = 1; // apriltag格式，含roll/pitch/yaw（4/5/6值）
-
-        // 解析成功，写入 apriltag 环形缓冲
-
-        // 写入当前写索引位置
-        lr_apriltag_buffer[lr_apriltag_write_idx] = pkt;
-        // 更新写索引（循环）
-        lr_apriltag_write_idx = (lr_apriltag_write_idx + 1) % LR_DATA_MAX_NUM;
-        // 有效计数不超过最大值
-        if (lr_apriltag_count < LR_DATA_MAX_NUM)
-        {
-            lr_apriltag_count++;
-        }
-        lr_apriltag_update_seq++;
-
-        if (g_datatype_cb)
-        {
-            g_datatype_cb(1); // apriltag类型回调
-        }
-    }
-    else
-    {
-        return; // 解析失败
-    }
+    return HAL_UART_Transmit(&huart2, frame, LR_VISION_FRAME_SIZE, 10) == HAL_OK;
 }
 
 // ======================== 串口接收入口 ========================
 void LR_Parse_And_Store(uint8_t byte)
 {
-    // 丢弃NUL，避免C字符串在中间被提前截断。
-    if (byte == '\0')
+    if (g_frame_pos == 0U)
+    {
+        if (byte == LR_VISION_FRAME_HEADER)
+        {
+            g_frame_buf[0] = byte;
+            g_frame_pos    = 1U;
+        }
+        return;
+    }
+
+    g_frame_buf[g_frame_pos++] = byte;
+    if (g_frame_pos < LR_VISION_FRAME_SIZE)
     {
         return;
     }
 
-    // 丢弃起始的孤立换行/回车，避免空帧被提前触发解析（例如流开头有噪声"\n,..."）
-    if (lr_rx_line_pos == 0 && (byte == '\n' || byte == '\r'))
+    const uint8_t expected_crc = LR_CRC8_Payload(&g_frame_buf[1], 13);
+    if (expected_crc != g_frame_buf[14])
     {
+        lr_diag_parse_fail_count++;
+        lr_diag_last_fail_stage = 4; // crc mismatch
+        vision_fail_cnt++;
+
+        if (byte == LR_VISION_FRAME_HEADER)
+        {
+            g_frame_buf[0] = byte;
+            g_frame_pos    = 1U;
+        }
+        else
+        {
+            g_frame_pos = 0U;
+        }
         return;
     }
 
-    if (lr_rx_line_pos < LR_RX_BUFFER_SIZE - 1)
-    {
-        lr_rx_line[lr_rx_line_pos++] = byte;
-    }
-    // 帧尾检测：\n 或 ,BB
-    int parse = 0;
-    if (byte == '\n' || lr_rx_line_pos >= LR_RX_BUFFER_SIZE - 1)
-        parse = 1;
-    else if (lr_rx_line_pos >= 3 && lr_rx_line[lr_rx_line_pos - 3] == ',' &&
-             lr_rx_line[lr_rx_line_pos - 2] == 'B' && lr_rx_line[lr_rx_line_pos - 1] == 'B')
-        parse = 1; // 检测到,BB
-    if (parse)
-    {
-        lr_rx_line[lr_rx_line_pos] = '\0';
+    LR_DataPacket pkt = { 0 };
+    pkt.x             = LR_DecodeFloatLE(&g_frame_buf[1]);
+    pkt.y             = LR_DecodeFloatLE(&g_frame_buf[5]);
+    pkt.z             = 0.0f;
+    pkt.yaw           = LR_DecodeFloatLE(&g_frame_buf[9]);
+    pkt.roll          = pkt.yaw;
+    pkt.pitch         = 0.0f;
+    pkt.has_rpy       = 0;
 
-        // 如果缓冲中去除空白后没有有效字符，则视为噪声空帧，丢弃。
-        int trimmed = 0;
-        for (int i = 0; i < lr_rx_line_pos; ++i)
-        {
-            unsigned char c = (unsigned char)lr_rx_line[i];
-            if (!isspace(c) && c != '\0')
-            {
-                trimmed = 1;
-                break;
-            }
-        }
-        if (!trimmed)
-        {
-            lr_rx_line_pos = 0;
-            memset(lr_rx_line, 0, sizeof(lr_rx_line));
-            return;
-        }
+    lr_diag_parse_ok_count++;
+    lr_diag_last_x       = pkt.x;
+    lr_diag_last_y       = pkt.y;
+    lr_diag_last_z       = pkt.z;
+    lr_diag_last_yaw     = pkt.yaw;
+    lr_diag_last_status  = g_frame_buf[13];
+    lr_diag_last_type    = 0;
+    lr_diag_last_raw_len = LR_VISION_FRAME_SIZE;
 
-        LR_Parse_Frame(lr_rx_line);
-        lr_rx_line_pos = 0;
-        memset(lr_rx_line, 0, sizeof(lr_rx_line));
-    }
+    LR_PushDetectPacket(&pkt);
+    g_frame_pos = 0U;
 }
