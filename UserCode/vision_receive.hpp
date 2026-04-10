@@ -2,11 +2,11 @@
  * @file lower_receive.h
  * @author Mburn
  * @date 2026-03-10
- * @brief 下位机串口数据接收与解析模块头文件（环形缓冲区版）
+ * @brief 下位机串口数据收发与解析模块头文件
  *
- * 提供数据包结构体、全局环形缓存、串口数据解析、数据清空、类型回调注册等接口。
- * 支持 detect（AA,1.0,2.0,3.0,4.0,BB）和 apriltag（AA,1.0,2.0,3.0,4.0,5.0,6.0,BB）两种格式。
- * 缓存满时自动覆盖最旧数据，避免数据丢失。
+ * 提供视觉串口固定二进制帧收发接口与目标缓存。
+ * 帧格式：0xAA + float32(x) + float32(y) + float32(yaw) + uint8(status) + uint8(crc8)
+ * float 按小端序发送，CRC8 覆盖 x/y/yaw/status（即 header 之后的 13 字节）。
  *
  * 用法：
  * 1. 在串口接收中断中调用 LR_Parse_And_Store(byte) 实现自动分帧与解析。
@@ -28,12 +28,14 @@ extern "C"
 
 // ======================== 配置参数 ========================
 
-// 串口接收缓冲区长度（每帧最大长度）
+// 串口接收缓冲区长度（仅用于诊断字符串缓存）
 #define LR_RX_BUFFER_SIZE 128
 // 可缓存的数据包最大数量（环形缓冲区大小）
 #define LR_DATA_MAX_NUM 10
 // 摄像头倒立正立，0=正立，1=倒立（影响坐标转换）
 #define LR_CAMERA_REVERSED 1
+#define LR_VISION_FRAME_HEADER 0xAAU
+#define LR_VISION_FRAME_SIZE   15U
 
 // ======================== 数据结构 ========================
 /**
@@ -81,10 +83,12 @@ extern volatile uint8_t  lr_diag_last_type;       // 0=detect, 1=apriltag
 extern volatile uint8_t  lr_diag_last_fail_stage; // 1=head/tail, 2=len, 3=number-parse
 extern volatile uint32_t lr_diag_last_raw_len;
 extern volatile char     lr_diag_last_raw_frame[LR_RX_BUFFER_SIZE];
+extern volatile uint8_t  lr_diag_last_status; // 最近一次成功解析的状态位
 
 // ======================== 接口函数 ========================
 
 #include "usart.h"
+#include "cmsis_os2.h"
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -100,11 +104,26 @@ bool CammeraReceive_OnRxCplt(UART_HandleTypeDef* huart);
 bool CammeraReceive_OnError(UART_HandleTypeDef* huart);
 
 /**
- * @brief 串口接收中断中调用，逐字节缓存，遇到'\n'或,BB自动解析一帧
+ * @brief 串口接收中断中调用，按固定二进制帧协议逐字节解析
  * @param byte 新接收到的字节
  * @note 推荐在HAL_UART_RxCpltCallback等中断回调内调用
  */
 void LR_Parse_And_Store(uint8_t byte);
+
+/**
+ * @brief 按固定二进制帧协议发送一帧视觉数据
+ * @param x 目标 x
+ * @param y 目标 y
+ * @param yaw 目标 yaw
+ * @param status 8位状态位
+ * @return true 发送调用成功；false 发送失败
+ */
+bool LR_Send_Frame(float x, float y, float yaw, uint8_t status);
+
+/**
+ * @brief 设置1Hz请求发送的相机ID字节
+ */
+void LR_Set_RequestCameraId(uint8_t camera_id);
 
 /**
  * @brief 清空所有已接收并解析的数据包缓存
