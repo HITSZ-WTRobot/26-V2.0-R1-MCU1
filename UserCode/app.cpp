@@ -6,42 +6,11 @@
 #include "drawer.hpp"
 #include "eventflags.hpp"
 #include "interboard_comm.hpp"
-#include "stm32f4xx_hal_uart.h"
 #include "tim.h"
 #include "vision_receive.hpp"
 
 Drawer*            drawer           = nullptr;
 static osTimerId_t drawer_timHandle = nullptr;
-
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef* huart)
-{
-    if (ControllerReceive_OnRxCplt(huart))
-    {
-        return;
-    }
-    // 板间通信串口接收回调
-    if (InterboardComm_OnRxCplt(huart))
-    {
-        return;
-    }
-    // 视觉串口接收回调
-    (void)CammeraReceive_OnRxCplt(huart);
-}
-
-void HAL_UART_ErrorCallback(UART_HandleTypeDef* huart)
-{
-    if (ControllerReceive_OnError(huart))
-    {
-        return;
-    }
-
-    if (InterboardComm_OnError(huart))
-    {
-        return;
-    }
-
-    (void)CammeraReceive_OnError(huart);
-}
 
 extern "C" void Drawer_softTIM(void* argument)
 {
