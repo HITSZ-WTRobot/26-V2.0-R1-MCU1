@@ -107,7 +107,7 @@ Drawer::Drawer() :
 
     up.disable();
     down.disable();
-    drawer_status = DRAWER_UNKNOWN;
+    drawer_status = DRAWER_OUT;
 
     drawerUPHandle  = osThreadNew(DrawerUP_Control, this, &drawerUP_attributes);
     drawerOUTHandle = osThreadNew(DrawerOUT_Control, this, &drawerOUT_attributes);
@@ -130,7 +130,18 @@ void Drawer::softTIM()
     }
     if ((osEventFlagsWait(flags_id, 0x00000002U, osFlagsWaitAny, 0) & 0xFF000002U) == 0x00000002U)
     {
-        target_up = !target_up;
+        if (!reset_running)
+        {
+            // Only switch the up/down target at stable endpoints.
+            if (drawer_status == DRAWER_OUT)
+            {
+                target_up = true;
+            }
+            else if (drawer_status == DRAWER_UP)
+            {
+                target_up = false;
+            }
+        }
     }
 }
 
@@ -425,7 +436,7 @@ void Drawer::DrawerOUT_Control_Loop()
             {
                 drawer_pushout_move_to_end(-1);
             }
-            if (!target_out && drawer_status == DRAWER_OUT)
+            if (0 && drawer_status == DRAWER_OUT)
             {
                 drawer_pushout_move_to_end(+1);
             }

@@ -5,8 +5,8 @@
 **********************************************************************
 
 File          : 
-Created       : 04. Apr 2026 20:28
-Ozone Version : V3.40e
+Created       : 14. Apr 2026 21:00
+Ozone Version : V3.40h
 */
 
 /*********************************************************************
@@ -22,8 +22,8 @@ void OnProjectLoad (void) {
   //
   // Dialog-generated settings
   //
-  Project.AddPathSubstitute ("E:/WTR/26-V2.0-R1-MCU1", "$(ProjectDir)");
-  Project.AddPathSubstitute ("e:/wtr/26-v2.0-r1-mcu1", "$(ProjectDir)");
+  Project.AddPathSubstitute ("D:/WTR/26-V2.0-R1-MCU1", "$(ProjectDir)");
+  Project.AddPathSubstitute ("d:/wtr/26-v2.0-r1-mcu1", "$(ProjectDir)");
   Project.SetDevice ("STM32F407VE");
   Project.SetHostIF ("USB", "");
   Project.SetTargetIF ("SWD");

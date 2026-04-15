@@ -53,7 +53,7 @@ void APP_Chassis_BeforeUpdate() {
 
   omni4 = new Omni4(
             {
-                .wheel_radius = 63.5f,
+                .wheel_radius = 63.66f,
                 .wheel_distance_x = 820.23f,
                 .wheel_distance_y = 840.42f,
                 .wheel_front_right = motor_vel_ctrl[0],
