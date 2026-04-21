@@ -17,11 +17,11 @@ uint8_t        buffer[14];
 static uint8_t rx_dma_buf[RX_DMA_BUF_SIZE];
 static uint8_t rx_frame_buf[RAWDATA_SIZE];
 
-static uint8_t  rx_frame_fill            = 0;
-uint32_t        decodesuccess_count      = 0;            // 成功解码次数
-bool            decode_enable            = false;        // 解码使能标志
-bool            is_controller_connected  = true;         // 遥控器连接状态
-JOYSTICK_MODE_E joystick_mode            = CHASSIS_MODE; // 遥控器模式，默认底盘模式
+static uint8_t  rx_frame_fill           = 0;
+uint32_t        decodesuccess_count     = 0;            // 成功解码次数
+bool            decode_enable           = false;        // 解码使能标志
+bool            is_controller_connected = true;         // 遥控器连接状态
+JOYSTICK_MODE_E joystick_mode           = CHASSIS_MODE; // 遥控器模式，默认底盘模式
 
 static service::Watchdog controller_watchdog;
 
@@ -166,51 +166,51 @@ void controller_task(void* argument)
 
                 if (button_status & (1U << 0))
                 {
-                    target_x = 0.50f;
-                    target_y = 0.0f;
-                    target_yaw = 0.0f;
+                    target_x             = 0.50f;
+                    target_y             = 0.0f;
+                    target_yaw           = 0.0f;
                     chassis_control_mode = POS_Control;
-                    is_target_finish = false;
+                    is_target_finish     = false;
                 }
                 else if (button_status & (1U << 1))
                 {
-                    target_x = 0.50f;
-                    target_y = 0.0f;
-                    target_yaw = 0.0f;
+                    target_x             = 0.50f;
+                    target_y             = 0.0f;
+                    target_yaw           = 0.0f;
                     chassis_control_mode = POS_Control;
-                    is_target_finish = false;
+                    is_target_finish     = false;
                 }
                 else if (button_status & (1U << 2))
                 {
-                    target_x = 0.50f;
-                    target_y = 0.0f;
-                    target_yaw = 0.0f;
+                    target_x             = 0.50f;
+                    target_y             = 0.0f;
+                    target_yaw           = 0.0f;
                     chassis_control_mode = POS_Control;
-                    is_target_finish = false;
+                    is_target_finish     = false;
                 }
                 else if (button_status & (1U << 3))
                 {
-                    target_x = 1.0f;
-                    target_y = 0.0f;
-                    target_yaw = 0.0f;
+                    target_x             = 1.0f;
+                    target_y             = 0.0f;
+                    target_yaw           = 0.0f;
                     chassis_control_mode = POS_Control;
-                    is_target_finish = false;
+                    is_target_finish     = false;
                 }
                 else if (button_status & (1U << 5))
                 {
-                    target_x = 0.0f;
-                    target_y = 0.0f;
-                    target_yaw = kStepYaw;
+                    target_x             = 0.0f;
+                    target_y             = 0.0f;
+                    target_yaw           = kStepYaw;
                     chassis_control_mode = POS_Control;
-                    is_target_finish = false;
+                    is_target_finish     = false;
                 }
                 else if (button_status & (1U << 6))
                 {
-                    target_x = 0.0f;
-                    target_y = 0.0f;
-                    target_yaw = -kStepYaw;
+                    target_x             = 0.0f;
+                    target_y             = 0.0f;
+                    target_yaw           = -kStepYaw;
                     chassis_control_mode = POS_Control;
-                    is_target_finish = false;
+                    is_target_finish     = false;
                 }
                 else
                 {

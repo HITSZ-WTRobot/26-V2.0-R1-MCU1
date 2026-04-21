@@ -53,7 +53,8 @@ velocity_profile::SCurveProfile::Config make_down_profile_cfg()
     return cfg;
 }
 
-const PD::Config up_error_pd_cfg = [] {
+const PD::Config up_error_pd_cfg = []
+{
     PD::Config cfg{};
     cfg.Kp             = 50.0f;
     cfg.Kd             = 0.5f;
@@ -61,7 +62,8 @@ const PD::Config up_error_pd_cfg = [] {
     return cfg;
 }();
 
-const PD::Config down_error_pd_cfg = [] {
+const PD::Config down_error_pd_cfg = []
+{
     PD::Config cfg{};
     cfg.Kp             = 50.0f;
     cfg.Kd             = 0.5f;
@@ -69,7 +71,8 @@ const PD::Config down_error_pd_cfg = [] {
     return cfg;
 }();
 
-const osThreadAttr_t drawerUP_attributes = [] {
+const osThreadAttr_t drawerUP_attributes = []
+{
     osThreadAttr_t attr{};
     attr.name       = "drawerUP";
     attr.stack_size = 128 * 8;
@@ -77,7 +80,8 @@ const osThreadAttr_t drawerUP_attributes = [] {
     return attr;
 }();
 
-const osThreadAttr_t drawerOUT_attributes = [] {
+const osThreadAttr_t drawerOUT_attributes = []
+{
     osThreadAttr_t attr{};
     attr.name       = "drawerOUT";
     attr.stack_size = 128 * 8;
@@ -118,9 +122,7 @@ void Drawer::update_1kHz()
     Drawer_TIM_Callback();
 }
 
-void Drawer::update_100Hz()
-{
-}
+void Drawer::update_100Hz() {}
 
 void Drawer::softTIM()
 {
@@ -177,10 +179,14 @@ bool Drawer::reset_all_stalled() const
 
 void Drawer::reset_angle_all()
 {
-    if (motor_drawer_1) motor_drawer_1->resetAngle();
-    if (motor_drawer_2) motor_drawer_2->resetAngle();
-    if (motor_drawer_3) motor_drawer_3->resetAngle();
-    if (motor_drawer_4) motor_drawer_4->resetAngle();
+    if (motor_drawer_1)
+        motor_drawer_1->resetAngle();
+    if (motor_drawer_2)
+        motor_drawer_2->resetAngle();
+    if (motor_drawer_3)
+        motor_drawer_3->resetAngle();
+    if (motor_drawer_4)
+        motor_drawer_4->resetAngle();
 }
 
 void Drawer::ResetDown_Step()
@@ -196,8 +202,10 @@ void Drawer::ResetDown_Step()
         return;
     }
 
-    motors::DJIMotor*                 m[4] = { motor_drawer_1, motor_drawer_2, motor_drawer_3, motor_drawer_4 };
-    controllers::MotorVelController*  c[4] = { &vel_drawer_1, &vel_drawer_2, &vel_drawer_3, &vel_drawer_4 };
+    motors::DJIMotor* m[4] = { motor_drawer_1, motor_drawer_2, motor_drawer_3, motor_drawer_4 };
+    controllers::MotorVelController* c[4] = {
+        &vel_drawer_1, &vel_drawer_2, &vel_drawer_3, &vel_drawer_4
+    };
 
     for (size_t i = 0; i < 4; i++)
     {
@@ -262,8 +270,8 @@ void Drawer::drawer_pushout_move_to_end(const int dir)
     const uint32_t t0 = HAL_GetTick();
     stall_start       = HAL_GetTick();
 
-    while (motor_drawer_out &&
-           (std::fabs(motor_drawer_out->getVelocity()) <= drawer_pushout_params.drawer_pushout_start_vel_th))
+    while (motor_drawer_out && (std::fabs(motor_drawer_out->getVelocity()) <=
+                                drawer_pushout_params.drawer_pushout_start_vel_th))
     {
         osDelay(1);
     }
@@ -444,4 +452,3 @@ void Drawer::DrawerOUT_Control_Loop()
         osDelay(10);
     }
 }
-

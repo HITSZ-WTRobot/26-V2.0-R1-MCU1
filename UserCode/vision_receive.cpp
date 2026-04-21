@@ -20,8 +20,8 @@
 #include <ctype.h>
 #include "vision_receive.hpp"
 
-static uint8_t g_lr_uart2_rx_byte = 0;
-static LR_DataTypeCallback g_datatype_cb = NULL;
+static uint8_t             g_lr_uart2_rx_byte = 0;
+static LR_DataTypeCallback g_datatype_cb      = NULL;
 
 static osThreadId_t         vision_parse_thread_handle   = NULL;
 static osThreadId_t         vision_request_thread_handle = NULL;
@@ -37,13 +37,13 @@ static const osThreadAttr_t vision_request_thread_attr = {
 };
 
 #define LR_RX_RING_SIZE 256U
-static uint8_t          g_rx_ring[LR_RX_RING_SIZE]    = { 0 };
-static volatile uint16_t g_rx_ring_head               = 0U;
-static volatile uint16_t g_rx_ring_tail               = 0U;
-static volatile uint32_t g_rx_ring_overflow_cnt       = 0U;
+static uint8_t           g_rx_ring[LR_RX_RING_SIZE] = { 0 };
+static volatile uint16_t g_rx_ring_head             = 0U;
+static volatile uint16_t g_rx_ring_tail             = 0U;
+static volatile uint32_t g_rx_ring_overflow_cnt     = 0U;
 
-//相机id请求定时器回调中使用，默认请求id=1
-static volatile uint8_t  g_request_camera_id          = 0x01U;
+// 相机id请求定时器回调中使用，默认请求id=1
+static volatile uint8_t g_request_camera_id = 0x01U;
 
 volatile uint32_t vision_rx_irq_cnt    = 0;
 volatile uint32_t vision_rx_byte_cnt   = 0;
@@ -51,19 +51,19 @@ volatile uint32_t vision_fail_cnt      = 0;
 volatile uint32_t vision_err_cnt       = 0;
 volatile uint32_t vision_last_err_code = 0;
 
-volatile uint32_t lr_diag_parse_ok_count    = 0;
-volatile uint32_t lr_diag_parse_fail_count  = 0;
-volatile float    lr_diag_last_x            = 0.0f;
-volatile float    lr_diag_last_y            = 0.0f;
-volatile float    lr_diag_last_z            = 0.0f;
-volatile float    lr_diag_last_yaw          = 0.0f;
-volatile uint8_t  lr_diag_last_type         = 0;
-volatile uint8_t  lr_diag_last_fail_stage   = 0;
-volatile uint32_t lr_diag_last_raw_len      = 0;
+volatile uint32_t lr_diag_parse_ok_count                    = 0;
+volatile uint32_t lr_diag_parse_fail_count                  = 0;
+volatile float    lr_diag_last_x                            = 0.0f;
+volatile float    lr_diag_last_y                            = 0.0f;
+volatile float    lr_diag_last_z                            = 0.0f;
+volatile float    lr_diag_last_yaw                          = 0.0f;
+volatile uint8_t  lr_diag_last_type                         = 0;
+volatile uint8_t  lr_diag_last_fail_stage                   = 0;
+volatile uint32_t lr_diag_last_raw_len                      = 0;
 volatile char     lr_diag_last_raw_frame[LR_RX_BUFFER_SIZE] = { 0 };
-volatile uint8_t  lr_diag_last_status       = 0;
+volatile uint8_t  lr_diag_last_status                       = 0;
 
-//环形缓冲区操作：推入一个字节，成功返回true，失败（满）返回false
+// 环形缓冲区操作：推入一个字节，成功返回true，失败（满）返回false
 static bool LR_RingPushByte(uint8_t byte)
 {
     const uint16_t head      = g_rx_ring_head;
@@ -78,7 +78,7 @@ static bool LR_RingPushByte(uint8_t byte)
     return true;
 }
 
-//环形缓冲区操作：弹出一个字节，成功返回true并通过out参数输出，失败（空）返回false
+// 环形缓冲区操作：弹出一个字节，成功返回true并通过out参数输出，失败（空）返回false
 static bool LR_RingPopByte(uint8_t* out)
 {
     if (!out)
@@ -92,7 +92,7 @@ static bool LR_RingPopByte(uint8_t* out)
         return false;
     }
 
-    *out          = g_rx_ring[tail];
+    *out           = g_rx_ring[tail];
     g_rx_ring_tail = (uint16_t)((tail + 1U) % LR_RX_RING_SIZE);
     return true;
 }
@@ -132,8 +132,8 @@ static void VisionRequestTask(void* argument)
 // ======================== 接口实现 ========================
 void CammeraReceive_Init(void)
 {
-    g_rx_ring_head = 0U;
-    g_rx_ring_tail = 0U;
+    g_rx_ring_head         = 0U;
+    g_rx_ring_tail         = 0U;
     g_rx_ring_overflow_cnt = 0U;
 
     if (!vision_parse_thread_handle)
@@ -204,7 +204,7 @@ bool CammeraReceive_OnError(UART_HandleTypeDef* huart)
     return true;
 }
 
-//CRC8计算，输入为数据部分（不包含帧头AA和帧尾BB），输出为CRC8校验码
+// CRC8计算，输入为数据部分（不包含帧头AA和帧尾BB），输出为CRC8校验码
 static uint8_t LR_CRC8_Payload(const uint8_t* data, uint8_t len)
 {
     uint8_t crc = 0;
@@ -231,7 +231,7 @@ void LR_Set_RequestCameraId(uint8_t camera_id)
     g_request_camera_id = camera_id;
 }
 
-//小端序浮点数编码/解码（IEEE 754单精度）
+// 小端序浮点数编码/解码（IEEE 754单精度）
 static void LR_EncodeFloatLE(float value, uint8_t* out4)
 {
     uint32_t bits = 0;
@@ -245,9 +245,9 @@ static void LR_EncodeFloatLE(float value, uint8_t* out4)
 // 小端序浮点数解码（IEEE 754单精度）
 static float LR_DecodeFloatLE(const uint8_t* in4)
 {
-    const uint32_t bits = ((uint32_t)in4[0]) | ((uint32_t)in4[1] << 8) |
-                          ((uint32_t)in4[2] << 16) | ((uint32_t)in4[3] << 24);
-    float value = 0.0f;
+    const uint32_t bits  = ((uint32_t)in4[0]) | ((uint32_t)in4[1] << 8) | ((uint32_t)in4[2] << 16) |
+                           ((uint32_t)in4[3] << 24);
+    float          value = 0.0f;
     memcpy(&value, &bits, sizeof(value));
     return value;
 }
@@ -275,9 +275,9 @@ static void LR_PushDetectPacket(const LR_DataPacket* pkt)
 }
 
 // ======================== 内部变量 ========================
-static LR_Vector3          g_camera_to_body_offset = { 0.28f,
-                                                       0.0f,
-                                                       0.0f }; // 视觉坐标系（相机）到机器人身体坐标系的偏移
+static LR_Vector3 g_camera_to_body_offset = { 0.28f,
+                                              0.0f,
+                                              0.0f }; // 视觉坐标系（相机）到机器人身体坐标系的偏移
 // 单位米x方向前正，y方向左正，z方向上正
 static LR_Vector3 g_arm_to_body_offset = { 0.83f,
                                            0.35f,
@@ -392,8 +392,8 @@ void LR_Clear_Data_Buffer(void)
     g_frame_pos = 0;
     memset(g_frame_buf, 0, sizeof(g_frame_buf));
 
-    g_rx_ring_head = 0U;
-    g_rx_ring_tail = 0U;
+    g_rx_ring_head         = 0U;
+    g_rx_ring_tail         = 0U;
     g_rx_ring_overflow_cnt = 0U;
     memset(g_rx_ring, 0, sizeof(g_rx_ring));
 }
