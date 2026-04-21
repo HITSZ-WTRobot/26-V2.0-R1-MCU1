@@ -1,7 +1,6 @@
 #include "controller_receive.hpp"
 #include "chassis.hpp"
 #include "stm32f4xx_hal_uart.h"
-#include "vision_auto_align.hpp"
 #include "watchdog.hpp"
 #include <cstdint>
 #include <string.h>
@@ -18,11 +17,11 @@ uint8_t        buffer[14];
 static uint8_t rx_dma_buf[RX_DMA_BUF_SIZE];
 static uint8_t rx_frame_buf[RAWDATA_SIZE];
 
-static uint8_t  rx_frame_fill            = 0;
-uint32_t        decodesuccess_count      = 0;            // 成功解码次数
-bool            decode_enable            = false;        // 解码使能标志
-bool            is_controller_connected  = true;         // 遥控器连接状态
-JOYSTICK_MODE_E joystick_mode            = CHASSIS_MODE; // 遥控器模式，默认底盘模式
+static uint8_t  rx_frame_fill           = 0;
+uint32_t        decodesuccess_count     = 0;            // 成功解码次数
+bool            decode_enable           = false;        // 解码使能标志
+bool            is_controller_connected = true;         // 遥控器连接状态
+JOYSTICK_MODE_E joystick_mode           = CHASSIS_MODE; // 遥控器模式，默认底盘模式
 
 static service::Watchdog controller_watchdog;
 
@@ -36,10 +35,7 @@ uint16_t LY; // 左摇杆y值数据原始数据
 uint16_t RX; // 右摇杆x值数据原始数据
 uint16_t RY; // 右摇杆y值数据原始数据
 
-float x = 0.0f, y = 0.0f,
-      yaw = 0.0f; // 来自视觉的目标位置和朝向数据（单位米/度）
-
-uint8_t auto_mode = 0; // 自动模式选择，0=没有视觉信息模式，1=自动对齐
+static bool is_target_finish = true;
 
 bool joystick_button_L; // 左摇杆按键状态
 bool joystick_button_R; // 右摇杆按键状态
@@ -133,7 +129,8 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef* huart, uint16_t Size)
 
 void controller_task(void* argument)
 {
-    JOYSTICK_MODE_E last_joystick_mode = joystick_mode;
+    constexpr float kStepPos = 0.30f;
+    constexpr float kStepYaw = 30.0f;
 
     for (;;)
     {
@@ -143,22 +140,15 @@ void controller_task(void* argument)
             joystick_mode = (JOYSTICK_MODE_E)(((int)joystick_mode + 1) % 4); // 四种模式循环切换
         }
 
-        if (last_joystick_mode != AUTO_ALIGN_MODE && joystick_mode == AUTO_ALIGN_MODE)
-        {
-            VisionAutoAlign_OnModeEnter();
-        }
-
         switch (joystick_mode)
         {
         case CHASSIS_MODE:
-            VisionAutoAlign_ResetState();
             chassis_control_mode = VEL_Control;
             chassis_v.vx         = __JOYSTICK2VEL__(LY_T);
             chassis_v.vy         = __JOYSTICK2VEL__(-1.0f * LX_T);
             chassis_v.wz         = __JOYSTICK2WZ__(-1.0f * RX_T);
             break;
         case CLAMP_MODE:
-            VisionAutoAlign_ResetState();
             chassis_control_mode = VEL_Control;
             chassis_v.vx         = 0;
             chassis_v.vy         = 0;
@@ -166,21 +156,77 @@ void controller_task(void* argument)
 
             break;
         case AUTO_ALIGN_MODE:
-            VisionAutoAlign_RunMode(button_status,
-                                    button[8],
-                                    &target_x,
-                                    &target_y,
-                                    &target_yaw,
-                                    &chassis_control_mode,
-                                    &chassis_v,
-                                    &auto_mode);
+            is_target_finish = (!chassis_) || chassis_->isTrajectoryFinished();
+
+            if (is_target_finish)
+            {
+                target_x   = 0.0f;
+                target_y   = 0.0f;
+                target_yaw = 0.0f;
+
+                if (button_status & (1U << 0))
+                {
+                    target_x             = 0.50f;
+                    target_y             = 0.0f;
+                    target_yaw           = 0.0f;
+                    chassis_control_mode = POS_Control;
+                    is_target_finish     = false;
+                }
+                else if (button_status & (1U << 1))
+                {
+                    target_x             = 0.50f;
+                    target_y             = 0.0f;
+                    target_yaw           = 0.0f;
+                    chassis_control_mode = POS_Control;
+                    is_target_finish     = false;
+                }
+                else if (button_status & (1U << 2))
+                {
+                    target_x             = 0.50f;
+                    target_y             = 0.0f;
+                    target_yaw           = 0.0f;
+                    chassis_control_mode = POS_Control;
+                    is_target_finish     = false;
+                }
+                else if (button_status & (1U << 3))
+                {
+                    target_x             = 1.0f;
+                    target_y             = 0.0f;
+                    target_yaw           = 0.0f;
+                    chassis_control_mode = POS_Control;
+                    is_target_finish     = false;
+                }
+                else if (button_status & (1U << 5))
+                {
+                    target_x             = 0.0f;
+                    target_y             = 0.0f;
+                    target_yaw           = kStepYaw;
+                    chassis_control_mode = POS_Control;
+                    is_target_finish     = false;
+                }
+                else if (button_status & (1U << 6))
+                {
+                    target_x             = 0.0f;
+                    target_y             = 0.0f;
+                    target_yaw           = -kStepYaw;
+                    chassis_control_mode = POS_Control;
+                    is_target_finish     = false;
+                }
+                else
+                {
+                    chassis_v.vx = 0.0f;
+                    chassis_v.vy = 0.0f;
+                    chassis_v.wz = 0.0f;
+                }
+            }
+            else
+            {
+                chassis_control_mode = POS_Control;
+            }
             break;
         default:
             break;
         }
-
-        last_joystick_mode = joystick_mode;
-
         osDelay(10);
     }
 }
@@ -224,13 +270,7 @@ void Buffer_Decode(void)
             button_status |= (1 << i);
         }
     }
-    uint32_t publish_flags = button_status;
-    if (joystick_mode == AUTO_ALIGN_MODE)
-    {
-        // 自动对齐模式下仅保留模式切换键事件，避免其他任务消费同一按键位产生冲突。
-        publish_flags &= (1U << 4);
-    }
-    osEventFlagsSet(flags_id, publish_flags);
+    osEventFlagsSet(flags_id, button_status);
     LX_T = (int16_t)LX;
     LY_T = (int16_t)LY;
     RX_T = (int16_t)RX;

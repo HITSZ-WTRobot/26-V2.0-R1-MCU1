@@ -33,7 +33,7 @@ extern "C"
 // 可缓存的数据包最大数量（环形缓冲区大小）
 #define LR_DATA_MAX_NUM 10
 // 摄像头倒立正立，0=正立，1=倒立（影响坐标转换）
-#define LR_CAMERA_REVERSED 1
+#define LR_CAMERA_REVERSED     1
 #define LR_VISION_FRAME_HEADER 0xAAU
 #define LR_VISION_FRAME_SIZE   15U
 
